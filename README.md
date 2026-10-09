@@ -2,7 +2,7 @@
 
 **41014 Sensors and Control in Mechatronics Systems, Assessment 4: Integrated Project**
 
-Team: Lachlan Cameron, Jonathan ([@Jojo-988](https://github.com/Jojo-988)), William ([@Willl-Je-Suis](https://github.com/Willl-Je-Suis))
+Team: Lachlan Cameron, Jonathan Wijaya, William Hsu
 
 > Demo video (5 min): _TODO link_
 > Platform: simulation (MuJoCo). Hardware: _TODO yes/no_
@@ -59,9 +59,9 @@ TODO: what does not work, what the results do and do not support, and any indepe
 
 | Member | Contribution |
 |--------|--------------|
-| Lachlan Cameron | TODO |
-| Jonathan (Jojo-988) | TODO |
-| William (Willl-Je-Suis) | TODO |
+| Lachlan | TODO |
+| Jonathan | TODO |
+| William | TODO |
 
 ## 11. Generative AI declaration
 
