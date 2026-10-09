@@ -5,8 +5,8 @@ Python 3.10 to 3.12 is recommended. Everyone should use a virtual environment so
 ## Get the code
 
 ```
-git clone https://github.com/lachiecameron/tb3-ekf-lqr-nav.git
-cd tb3-ekf-lqr-nav
+git clone https://github.com/lachiecameron/Integrated-Project.git
+cd Integrated-Project
 ```
 
 ## macOS (Terminal)
