@@ -1,0 +1,25 @@
+# Python
+__pycache__/
+*.py[cod]
+.venv/
+venv/
+*.egg-info/
+.pytest_cache/
+.ipynb_checkpoints/
+
+# OS junk (Mac + Windows teammates)
+.DS_Store
+Thumbs.db
+desktop.ini
+
+# Editors
+.vscode/
+.idea/
+
+# Generated outputs (keep the folder, not the bulk files)
+results/*
+!results/.gitkeep
+*.mp4
+*.avi
+!docs/media/*.gif
+!docs/media/*.png
