@@ -1,5 +1,5 @@
 <mujoco model="turtlebot3_waffle_pi">
-  <compiler angle="radian" meshdir="assets/"/>
+  <compiler angle="radian" meshdir="stl_models/"/>
 
   <option cone="elliptic" impratio="10"/>
 
