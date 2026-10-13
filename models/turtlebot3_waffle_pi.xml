@@ -60,9 +60,10 @@
     </body>
   </worldbody>
 
+   # kv is the velocity gain, which determines how quickly the wheel responds to control inputs. A higher kv value results in faster response, while a lower value results in slower response.
   <actuator>
-    <velocity class="wheel_left" name="wheel_left" joint="wheel_left"/>
-    <velocity class="wheel_right" name="wheel_right" joint="wheel_right"/>
+    <velocity class="wheel_left" name="wheel_left" joint="wheel_left"    kv="10"/>
+    <velocity class="wheel_right" name="wheel_right" joint="wheel_right" kv="10"/>
   </actuator>
 
   <contact>
