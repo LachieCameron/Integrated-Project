@@ -9,7 +9,7 @@ git clone https://github.com/lachiecameron/Integrated-Project.git
 cd Integrated-Project
 ```
 
-## macOS (Terminal)
+## Linux/macOS (Terminal)
 
 ```
 python3 -m venv .venv

@@ -45,6 +45,17 @@
       <geom pos="-0.049 0 0.1255" mesh="lds" material="black" class="visual"/>
       <geom pos="-0.049 0 0.1255" mesh="lds" class="collision"/>
       <geom size="0.0075 0.015 0.0135" pos="0.078 0 0.107" type="box" material="grey"/>
+
+
+
+      <camera name= "raspi_cam_v2.1" pos= "0.078 0 0.107" fovy="48.8"/>
+
+
+      <site name="imu_site" pos="-0.064 0 0.06" size="0.01" type="sphere" rgba="1 0 0 0.5"/>
+
+
+
+
       <body name="wheel_left" pos="0 0.144 0.033" quat="0.707388 -0.706825 0 0">
         <inertial pos="0 0 0" quat="-0.000890159 0.706886 0.000889646 0.707326" mass="0.0284989" diaginertia="2.07126e-05 1.11924e-05 1.11756e-05"/>
         <joint name="wheel_left" class="wheel_left"/>
@@ -70,4 +81,20 @@
     <exclude body1="base" body2="wheel_left"/>
     <exclude body1="base" body2="wheel_right"/>
   </contact>
+
+  # Sensors
+  <sensor>
+    <!-- Wheel encoders-->
+    <jointpos name="wheel_left_encoder" joint="wheel_left"/>
+    <jointpos name="wheel_right_encoder" joint="wheel_right"/>
+    <jointvel name="wheel_left_velocity" joint="wheel_left"/>
+    <jointvel name="wheel_right_velocity" joint="wheel_right"/>
+
+    <!-- IMU (MPU9250/ICM-20648)-->
+    <accelerometer name="imu_accel" site="imu_site"/>
+    <gyro name="imu_gyro" site="imu_site"/>
+
+  </sensor>
+
+
 </mujoco>
