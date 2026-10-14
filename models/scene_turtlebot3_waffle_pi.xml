@@ -92,7 +92,7 @@
           type="box"
           pos="2.4 2.65 0.1"
           size="0.35 0.15 0.1"
-          rgba="0.1 0.8 0.3 1"/>
+          rgba="0.1 0.8 0.3 0.2"/>
 
   </worldbody>
 </mujoco>
