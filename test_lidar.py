@@ -1,0 +1,80 @@
+import mujoco
+import mujoco.viewer
+import time
+import numpy as np
+
+model = mujoco.MjModel.from_xml_path(
+    "models/scene_turtlebot3_waffle_pi.xml"
+)
+
+data = mujoco.MjData(model)
+
+angles = list(range(-90, 91, 15))
+
+sensor_ids = [
+    model.sensor(f"lidar_{angle}").id
+    for angle in angles
+]
+
+STOP_DISTANCE = 0.5
+stopped = False
+
+def read_lidar():
+    distances = []
+
+    for sid in sensor_ids:
+        adr = model.sensor_adr[sid]
+        distances.append(float(data.sensordata[adr]))
+
+    return np.array(distances)
+
+
+mujoco.mj_forward(model, data)
+
+with mujoco.viewer.launch_passive(model, data) as viewer:
+
+    last_print = -1.0
+
+    while viewer.is_running():
+
+        distances = read_lidar()
+
+        # Only check sensors facing forward (-30 to +30 degrees)
+        front_indices = [
+            i for i, angle in enumerate(angles)
+            if -30 <= angle <= 30
+        ]
+
+        front_distances = distances[front_indices]
+
+        valid = front_distances[front_distances >= 0]
+
+        nearest = (
+            np.min(valid)
+            if len(valid) > 0
+            else float("inf")
+        )
+
+        if nearest < STOP_DISTANCE:
+            if not stopped:
+                print(f"STOP! Obstacle at {nearest:.2f} m")
+                stopped = True
+
+        if stopped:
+            data.ctrl[:] = 0
+        else:
+            data.ctrl[0] = 2.0
+            data.ctrl[1] = 2.0
+
+        mujoco.mj_step(model, data)
+
+        if data.time - last_print >= 0.5:
+            print(
+                f"Time: {data.time:.2f} | "
+                f"Front distance: {nearest:.2f} m | "
+                f"Stopped: {stopped}"
+            )
+            last_print = data.time
+
+        viewer.sync()
+        time.sleep(model.opt.timestep)
