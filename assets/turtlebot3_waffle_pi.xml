@@ -68,6 +68,21 @@
         <geom quat="0.707388 0.706825 0 0" mesh="right_tire" material="grey" class="visual"/>
         <geom quat="0.707388 0.706825 0 0" mesh="right_tire" class="collision" friction="3 0.005 0.0001"/>
       </body>
+      <!-- Lidar Sites -->
+      <site name="lidar_-90" pos="-0.049 0 0.1255" quat="0.50000000 0.50000000 0.50000000 -0.50000000" size="0.005" rgba="0 1 0 0.4" />
+      <site name="lidar_-75" pos="-0.049 0 0.1255" quat="0.56098553 0.43045933 0.56098553 -0.43045933" size="0.005" rgba="0 1 0 0.4" />
+      <site name="lidar_-60" pos="-0.049 0 0.1255" quat="0.61237244 0.35355339 0.61237244 -0.35355339" size="0.005" rgba="0 1 0 0.4" />
+      <site name="lidar_-45" pos="-0.049 0 0.1255" quat="0.65328148 0.27059805 0.65328148 -0.27059805" size="0.005" rgba="0 1 0 0.4" />
+      <site name="lidar_-30" pos="-0.049 0 0.1255" quat="0.68301270 0.18301270 0.68301270 -0.18301270" size="0.005" rgba="0 1 0 0.4" />
+      <site name="lidar_-15" pos="-0.049 0 0.1255" quat="0.70105738 0.09229596 0.70105738 -0.09229596" size="0.005" rgba="0 1 0 0.4" />
+      <site name="lidar_0" pos="-0.049 0 0.1255" quat="0.70710678 -0.00000000 0.70710678 0.00000000" size="0.005" rgba="0 1 0 0.4" />
+      <site name="lidar_15" pos="-0.049 0 0.1255" quat="0.70105738 -0.09229596 0.70105738 0.09229596" size="0.005" rgba="0 1 0 0.4" />
+      <site name="lidar_30" pos="-0.049 0 0.1255" quat="0.68301270 -0.18301270 0.68301270 0.18301270" size="0.005" rgba="0 1 0 0.4" />
+      <site name="lidar_45" pos="-0.049 0 0.1255" quat="0.65328148 -0.27059805 0.65328148 0.27059805" size="0.005" rgba="0 1 0 0.4" />
+      <site name="lidar_60" pos="-0.049 0 0.1255" quat="0.61237244 -0.35355339 0.61237244 0.35355339" size="0.005" rgba="0 1 0 0.4" />
+      <site name="lidar_75" pos="-0.049 0 0.1255" quat="0.56098553 -0.43045933 0.56098553 0.43045933" size="0.005" rgba="0 1 0 0.4" />
+      <site name="lidar_90" pos="-0.049 0 0.1255" quat="0.50000000 -0.50000000 0.50000000 0.50000000" size="0.005" rgba="0 1 0 0.4" />
+   
     </body>
   </worldbody>
 
@@ -95,7 +110,8 @@
     <gyro name="imu_gyro" site="imu_site"/>
 
     <!-- LIDAR (LDS_02) 16~800cm-->
-    <rangefinder name="lidar_-90" site="lidar_-90" cutoff="3.0" />
+    <rangefinder name="lidar_-90" site="lidar_-90" cutoff="3.0" /><rangefinder name="lidar_-75" site="lidar_-75" cutoff="3.0" /><rangefinder name="lidar_-60" site="lidar_-60" cutoff="3.0" /><rangefinder name="lidar_-45" site="lidar_-45" cutoff="3.0" /><rangefinder name="lidar_-30" site="lidar_-30" cutoff="3.0" /><rangefinder name="lidar_-15" site="lidar_-15" cutoff="3.0" /><rangefinder name="lidar_0" site="lidar_0" cutoff="3.0" /><rangefinder name="lidar_15" site="lidar_15" cutoff="3.0" /><rangefinder name="lidar_30" site="lidar_30" cutoff="3.0" /><rangefinder name="lidar_45" site="lidar_45" cutoff="3.0" /><rangefinder name="lidar_60" site="lidar_60" cutoff="3.0" /><rangefinder name="lidar_75" site="lidar_75" cutoff="3.0" /><rangefinder name="lidar_90" site="lidar_90" cutoff="3.0" />
+    <!-- <rangefinder name="lidar_-90" site="lidar_-90" cutoff="3.0" />
     <rangefinder name="lidar_-75" site="lidar_-75" cutoff="3.0" />
     <rangefinder name="lidar_-60" site="lidar_-60" cutoff="3.0" />
     <rangefinder name="lidar_-45" site="lidar_-45" cutoff="3.0" />
@@ -106,7 +122,7 @@
     <rangefinder name="lidar_30" site="lidar_30" cutoff="3.0" />
     <rangefinder name="lidar_45" site="lidar_45" cutoff="3.0" />
     <rangefinder name="lidar_60" site="lidar_60" cutoff="3.0" />
-    <rangefinder name="lidar_75" site="lidar_75" cutoff="3.0" />
+    <rangefinder name="lidar_75" site="lidar_75" cutoff="3.0" /> -->
 
   </sensor>
 
