@@ -106,8 +106,8 @@
           conaffinity="0"/> -->
     <geom name="aruco_marker"
           type="box"
-          pos="2.4 2.65 0.15"
-          size="0.1 0.01 0.1"
+          pos="2.4 2.5 0.2"
+          size="0.1 0.001 0.1"
           material="aruco_material"/>
   </worldbody>
 </mujoco>
