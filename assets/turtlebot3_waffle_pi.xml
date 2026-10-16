@@ -49,7 +49,7 @@
       <site name="camera_site" pos="0.078 0 0.107" size="0.01" type="sphere" rgba="1 0 0 0.5"/>
 
       <!-- Lower resolution with higher frame rate 90fps -->
-      <camera name= "raspi_cam_v2.1" pos= "0.078 0 0.107" euler="0 -1.571 1.571" fovy="48.8" output= "rgb" resolution="640 480"/> 
+      <camera name= "raspi_cam_v2.1" pos= "0.078 0 0.107" euler="3.141 -1.571 1.571" fovy="48.8" output= "rgb" resolution="640 480"/> 
 
 
 
