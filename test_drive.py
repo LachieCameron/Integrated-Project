@@ -9,6 +9,9 @@ model = mujoco.MjModel.from_xml_path(
 
 data = mujoco.MjData(model)
 
+renderer = mujoco.Renderer(model, 480, 640)
+renderer.update_scene(data, camera="raspi_cam_v2.1")
+
 with mujoco.viewer.launch_passive(model, data) as viewer:
     while viewer.is_running():
         start = time.monotonic()
@@ -22,10 +25,10 @@ with mujoco.viewer.launch_passive(model, data) as viewer:
             viewer.sync()
             time.sleep(model.opt.timestep)
 
-        # Rotate for 3 seconds
+        # Rotate for 10 seconds
         start = time.monotonic()
 
-        while viewer.is_running() and time.monotonic() - start < 3:
+        while viewer.is_running() and time.monotonic() - start < 10:
             with viewer.lock():
                 data.ctrl[0] = -2.0
                 data.ctrl[1] = 2.0
