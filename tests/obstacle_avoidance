@@ -1,0 +1,375 @@
+
+import mujoco
+import mujoco.viewer
+import numpy as np
+import math
+import time
+
+# ==========================================
+# LOAD MODEL
+# ==========================================
+
+model = mujoco.MjModel.from_xml_path(
+    "assets/scene_turtlebot3_waffle_pi.xml"
+)
+data = mujoco.MjData(model)
+
+# ==========================================
+# CONFIGURATION
+# ==========================================
+
+# Navigation approach point
+GOAL_X = 2.4
+GOAL_Y = 2.10
+
+# Charging station centre
+DOCK_X = 2.4
+DOCK_Y = 2.65
+
+# Robot centre stopping position
+DOCK_STOP_Y = 2.30
+
+GOAL_TOLERANCE = 0.12
+DOCK_TOLERANCE = 0.04
+
+# Obstacle detection
+STOP_DISTANCE = 0.40
+CLEAR_DISTANCE = 0.65
+
+# Wheel speeds (rad/s)
+FORWARD_SPEED = 5.0
+TURN_SPEED = 3.0
+SLOW_SPEED = 1.8
+
+# Docking speeds
+ALIGN_SPEED = 0.8
+DOCK_SPEED = 0.6
+
+# LiDAR
+angles = list(range(-90, 91, 15))
+sensor_ids = [
+    model.sensor(f"lidar_{angle}").id
+    for angle in angles
+]
+
+base_id = model.body("base").id
+
+# ==========================================
+# FUNCTIONS
+# ==========================================
+
+def get_pose():
+    pos = data.xpos[base_id]
+    rotation = data.xmat[base_id].reshape(3, 3)
+
+    yaw = math.atan2(
+        rotation[1, 0],
+        rotation[0, 0]
+    )
+
+    return float(pos[0]), float(pos[1]), yaw
+
+
+def read_lidar():
+    readings = []
+
+    for sid in sensor_ids:
+        adr = model.sensor_adr[sid]
+        distance = float(data.sensordata[adr])
+
+        if distance < 0:
+            distance = 3.0
+
+        readings.append(distance)
+
+    return np.array(readings)
+
+
+def sector_min(readings, start_angle, end_angle):
+    values = [
+        readings[i]
+        for i, angle in enumerate(angles)
+        if start_angle <= angle <= end_angle
+    ]
+    return min(values)
+
+
+def set_wheels(left, right):
+    data.ctrl[0] = np.clip(left, -7.88, 7.88)
+    data.ctrl[1] = np.clip(right, -7.88, 7.88)
+
+
+def angle_error(target, current):
+    return math.atan2(
+        math.sin(target - current),
+        math.cos(target - current)
+    )
+
+
+# ==========================================
+# STATES
+# ==========================================
+
+state = "NAVIGATE"
+
+avoid_direction = 1
+turn_start_yaw = 0.0
+avoid_start_x = 0.0
+avoid_start_y = 0.0
+
+last_print = -1.0
+
+mujoco.mj_forward(model, data)
+
+print("===================================")
+print("TURTLEBOT3 AUTONOMOUS DOCKING")
+print("===================================")
+print(f"Approach point: ({GOAL_X}, {GOAL_Y})")
+print(f"Charging station: ({DOCK_X}, {DOCK_Y})")
+print("Starting navigation...")
+
+# ==========================================
+# MAIN LOOP
+# ==========================================
+
+with mujoco.viewer.launch_passive(model, data) as viewer:
+
+    while viewer.is_running():
+
+        x, y, yaw = get_pose()
+        lidar = read_lidar()
+
+        front = sector_min(lidar, -30, 30)
+        left = sector_min(lidar, 45, 90)
+        right = sector_min(lidar, -90, -45)
+
+        dx = GOAL_X - x
+        dy = GOAL_Y - y
+
+        distance_goal = math.hypot(dx, dy)
+        target_yaw = math.atan2(dy, dx)
+        heading_error = angle_error(target_yaw, yaw)
+
+        # ==================================
+        # TRANSITION TO DOCKING
+        # ==================================
+
+        if (
+            state in ("NAVIGATE", "AVOID_FORWARD")
+            and distance_goal < GOAL_TOLERANCE
+        ):
+            state = "DOCK_ALIGN"
+            set_wheels(0, 0)
+            print("Approach point reached. Docking initiated.")
+
+        # ==================================
+        # NAVIGATE
+        # ==================================
+
+        if state == "NAVIGATE":
+
+            if front < STOP_DISTANCE:
+
+                state = "AVOID_TURN"
+                turn_start_yaw = yaw
+
+                avoid_direction = 1 if left > right else -1
+
+                set_wheels(0, 0)
+
+                print(
+                    f"Obstacle {front:.2f}m ahead. "
+                    f"Turning {'left' if avoid_direction > 0 else 'right'}"
+                )
+
+            else:
+
+                if abs(heading_error) > 0.5:
+
+                    direction = np.sign(heading_error)
+
+                    set_wheels(
+                        -TURN_SPEED * direction,
+                        TURN_SPEED * direction
+                    )
+
+                else:
+
+                    speed = (
+                        SLOW_SPEED
+                        if front < CLEAR_DISTANCE
+                        else FORWARD_SPEED
+                    )
+
+                    correction = np.clip(
+                        1.5 * heading_error,
+                        -1.5,
+                        1.5
+                    )
+
+                    set_wheels(
+                        speed - correction,
+                        speed + correction
+                    )
+
+        # ==================================
+        # AVOID OBSTACLE: TURN
+        # ==================================
+
+        elif state == "AVOID_TURN":
+
+            turned = abs(
+                angle_error(yaw, turn_start_yaw)
+            )
+
+            if turned < math.pi / 2:
+
+                set_wheels(
+                    -TURN_SPEED * avoid_direction,
+                    TURN_SPEED * avoid_direction
+                )
+
+            else:
+
+                state = "AVOID_FORWARD"
+                avoid_start_x = x
+                avoid_start_y = y
+
+                set_wheels(0, 0)
+
+        # ==================================
+        # AVOID OBSTACLE: FORWARD
+        # ==================================
+
+        elif state == "AVOID_FORWARD":
+
+            travelled = math.hypot(
+                x - avoid_start_x,
+                y - avoid_start_y
+            )
+
+            if front < STOP_DISTANCE:
+
+                state = "AVOID_TURN"
+                turn_start_yaw = yaw
+                avoid_direction = 1 if left > right else -1
+
+                set_wheels(0, 0)
+
+            elif travelled < 0.8:
+
+                set_wheels(SLOW_SPEED, SLOW_SPEED)
+
+            else:
+
+                state = "NAVIGATE"
+                set_wheels(0, 0)
+
+        # ==================================
+        # DOCK ALIGNMENT
+        # ==================================
+
+        elif state == "DOCK_ALIGN":
+
+            # Face north toward charging station
+            desired_yaw = math.pi / 2
+
+            error = angle_error(desired_yaw, yaw)
+
+            if abs(error) > 0.05:
+
+                direction = np.sign(error)
+
+                set_wheels(
+                    -ALIGN_SPEED * direction,
+                    ALIGN_SPEED * direction
+                )
+
+            else:
+
+                set_wheels(0, 0)
+                state = "DOCK_FORWARD"
+
+                print("Aligned with charging station.")
+
+        # ==================================
+        # FINAL DOCKING APPROACH
+        # ==================================
+
+        elif state == "DOCK_FORWARD":
+
+            distance_dock = math.hypot(
+                DOCK_X - x,
+                DOCK_STOP_Y - y
+            )
+
+            if distance_dock < DOCK_TOLERANCE:
+
+                set_wheels(0, 0)
+                state = "ARRIVED"
+
+                print("===================================")
+                print("DOCKING COMPLETE")
+                print("===================================")
+
+            elif front < 0.08:
+
+                set_wheels(0, 0)
+                state = "DOCK_BLOCKED"
+
+                print("Docking blocked: object too close.")
+
+            else:
+
+                target_heading = math.atan2(
+                    DOCK_STOP_Y - y,
+                    DOCK_X - x
+                )
+
+                error = angle_error(target_heading, yaw)
+
+                correction = np.clip(
+                    0.8 * error,
+                    -0.25,
+                    0.25
+                )
+
+                set_wheels(
+                    DOCK_SPEED - correction,
+                    DOCK_SPEED + correction
+                )
+
+        # ==================================
+        # DOCK BLOCKED
+        # ==================================
+
+        elif state == "DOCK_BLOCKED":
+            set_wheels(0, 0)
+
+        # ==================================
+        # ARRIVED
+        # ==================================
+
+        elif state == "ARRIVED":
+            set_wheels(0, 0)
+
+        # ==================================
+        # SIMULATION STEP
+        # ==================================
+
+        mujoco.mj_step(model, data)
+
+        if data.time - last_print >= 0.5:
+
+            print(
+                f"Time: {data.time:.1f}s | "
+                f"Position: ({x:.2f}, {y:.2f}) | "
+                f"Goal: {distance_goal:.2f}m | "
+                f"Front: {front:.2f}m | "
+                f"State: {state}"
+            )
+
+            last_print = data.time
+
+        viewer.sync()
+        time.sleep(model.opt.timestep)

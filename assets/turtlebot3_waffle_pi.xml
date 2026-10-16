@@ -94,6 +94,20 @@
     <accelerometer name="imu_accel" site="imu_site"/>
     <gyro name="imu_gyro" site="imu_site"/>
 
+    <!-- LIDAR (LDS_02) 16~800cm-->
+    <rangefinder name="lidar_-90" site="lidar_-90" cutoff="3.0" />
+    <rangefinder name="lidar_-75" site="lidar_-75" cutoff="3.0" />
+    <rangefinder name="lidar_-60" site="lidar_-60" cutoff="3.0" />
+    <rangefinder name="lidar_-45" site="lidar_-45" cutoff="3.0" />
+    <rangefinder name="lidar_-30" site="lidar_-30" cutoff="3.0" />
+    <rangefinder name="lidar_-15" site="lidar_-15" cutoff="3.0" />
+    <rangefinder name="lidar_0" site="lidar_0" cutoff="3.0" />
+    <rangefinder name="lidar_15" site="lidar_15" cutoff="3.0" />
+    <rangefinder name="lidar_30" site="lidar_30" cutoff="3.0" />
+    <rangefinder name="lidar_45" site="lidar_45" cutoff="3.0" />
+    <rangefinder name="lidar_60" site="lidar_60" cutoff="3.0" />
+    <rangefinder name="lidar_75" site="lidar_75" cutoff="3.0" />
+
   </sensor>
 
 
