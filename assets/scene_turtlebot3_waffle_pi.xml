@@ -30,8 +30,10 @@
               texrepeat="5 5"
               reflectance="0.2"/>
 
-     <texture name="aruco_texture" type="2d" file="textures/aruco.png"/>
-     <material name="aruco_material" texture="aruco_texture" specular="0.1" shininess="0.1"/>
+<!-- Aruco tags -->
+
+     <texture name="aruco_texture_00" type="2d" file="textures/aruco_00.png"/>
+     <material name="aruco_material_00" texture="aruco_texture_00" specular="0.1" shininess="0.1"/>
 
 
   </asset>
@@ -108,6 +110,6 @@
           type="box"
           pos="2.4 2.5 0.2"
           size="0.1 0.001 0.1"
-          material="aruco_material"/>
+          material="aruco_material_00"/>
   </worldbody>
 </mujoco>
