@@ -85,7 +85,7 @@ with mujoco.viewer.launch_passive(model, data) as viewer:
                 size=[0.14, 0.14, 0.05],                       # Match base dimensions [x, y, z]
                 pos=[est_x, est_y, 0.05],                      # EKF positions (raised slightly off floor)
                 mat=r_mat,                                     # Calculated rotation matrix orientation
-                rgba=[0.0, 1.0, 0.0, 0.4]                      # Semi-transparent green (R, G, B, Alpha)
+                rgba=[0.0, 1.0, 0.0, 0.1]                      # Semi-transparent green (R, G, B, Alpha)
             )
 
         # Print state telemetry cleanly

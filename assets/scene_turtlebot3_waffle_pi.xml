@@ -23,12 +23,12 @@
              rgb2="0.1 0.2 0.3"
              markrgb="0.8 0.8 0.8"
              width="300" height="300"/>
-
+  <!-- Groundplane texture, 0= opaque 1= reflectance -->
     <material name="groundplane"
               texture="groundplane"
               texuniform="true"
               texrepeat="5 5"
-              reflectance="0.2"/>
+              reflectance="0"/>
 
 <!-- Aruco tags -->
 

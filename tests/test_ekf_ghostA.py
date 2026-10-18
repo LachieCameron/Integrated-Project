@@ -30,7 +30,7 @@ vopt_ghost = mujoco.MjvOption()
 vopt_ghost.flags[mujoco.mjtVisFlag.mjVIS_TRANSPARENT] = True
 
 pert_empty = mujoco.MjvPerturb()
-catmask_dynamic = mujoco.mjtCatBit.mjCAT_DYNAMIC
+catmask = mujoco.mjtCatBit.mjCAT_DYNAMIC
 
 imu = IMUSensor(model)
 encoder = WheelEncoder(model)
@@ -49,6 +49,7 @@ with mujoco.viewer.launch_passive(model, data) as viewer:
 
         # 2. Physics Step
         mujoco.mj_step(model, data)
+        # mujoco.mj_step(model, data_ghost)  # Update ghost data for visualization
 
         # 3. Read Hardware Abstraction Layer (Sensing)
         d_left, d_right, v_left, v_right = encoder.step(data)
@@ -68,26 +69,41 @@ with mujoco.viewer.launch_passive(model, data) as viewer:
             geom_idx = user_scn.ngeom
             user_scn.ngeom += 1
             
-            # Convert EKF heading (theta around Z) into a 3x3 rotation matrix for MuJoCo
-            cos_t = np.cos(est_theta)
-            sin_t = np.sin(est_theta)
-            # Z-axis rotation matrix flattened in row-major layout
-            r_mat = np.array([
-                cos_t, -sin_t, 0.0,
-                sin_t,  cos_t, 0.0,
-                0.0,    0.0,   1.0
-            ], dtype=np.float32)
+            # # Convert EKF heading (theta around Z) into a 3x3 rotation matrix for MuJoCo
+            # cos_t = np.cos(est_theta)
+            # sin_t = np.sin(est_theta)
+            # # Z-axis rotation matrix flattened in row-major layout
+            # r_mat = np.array([
+            #     cos_t, -sin_t, 0.0,
+            #     sin_t,  cos_t, 0.0,
+            #     0.0,    0.0,   1.0
+            # ], dtype=np.float32)
 
             # Initialize a box geometry representing the Waffle Pi footprint
-            mujoco.mjv_initGeom(
-                user_scn.geoms[geom_idx],
-                type=mujoco.mjtGeom.mjGEOM_BOX,
-                size=[0.14, 0.14, 0.05],                       # Match base dimensions [x, y, z]
-                pos=[est_x, est_y, 0.05],                      # EKF positions (raised slightly off floor)
-                mat=r_mat,                                     # Calculated rotation matrix orientation
-                rgba=[0.0, 1.0, 0.0, 0.4]                      # Semi-transparent green (R, G, B, Alpha)
-            )
+            # mujoco.mjv_initGeom(
+            #     user_scn.geoms[geom_idx],
+            #     type=mujoco.mjtGeom.mjGEOM_BOX,
+            #     size=[0.14, 0.14, 0.05],                       # Match base dimensions [x, y, z]
+            #     pos=[est_x, est_y, 0.05],                      # EKF positions (raised slightly off floor)
+            #     mat=r_mat,                                     # Calculated rotation matrix orientation
+            #     rgba=[0.0, 1.0, 0.0, 0.2]                      # Semi-transparent green (R, G, B, Alpha)
+            # )
 
+            data_ghost.qpos[0] = est_x
+            data_ghost.qpos[1] = est_y
+
+            half_theta = est_theta / 2.0
+            data_ghost.qpos[3] = math.cos(half_theta)  # w
+            data_ghost.qpos[4] = 0.0                   # x
+            data_ghost.qpos[5] = 0.0                   # y
+            data_ghost.qpos[6] = math.sin(half_theta)  # z
+
+
+            mujoco.mj_forward(model, data_ghost)  # Update ghost data for visualization
+
+            mujoco.mjv_addGeoms(model, data_ghost, vopt_ghost, pert_empty, catmask, user_scn )
+
+           
         # Print state telemetry cleanly
         if data.time % 0.1 < dt:
             print(f"Time: {data.time:.2f}s | Estimated Pose: X={current_pose[0]:.3f}, Y={current_pose[1]:.3f}, Heading={math.degrees(current_pose[2]):.1f}°")
