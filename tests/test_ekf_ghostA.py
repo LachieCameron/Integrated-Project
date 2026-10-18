@@ -37,8 +37,6 @@ encoder = WheelEncoder(model)
 ekf = RobotEKF()
 
 dt = model.opt.timestep
-last_render_time = 0.0
-render_dt = 1.0 / 90.0  # Target target visual updates at 60 Hz
 
 with mujoco.viewer.launch_passive(model, data) as viewer:
     print("Simulation execution loop spinning...")
@@ -58,49 +56,40 @@ with mujoco.viewer.launch_passive(model, data) as viewer:
 
         # 4. State Estimation
         current_pose = ekf.update(d_left, d_right, gyro[2], dt)
+        est_x, est_y, est_theta = current_pose[0], current_pose[1], current_pose[2]
 
-        if data.time - last_render_time >= render_dt:
-            last_render_time = data.time
 
-            est_x, est_y, est_theta = current_pose[0], current_pose[1], current_pose[2]
+        user_scn = viewer.user_scn
+        if user_scn is not None:
+            # Clear previous frame's ghost data so markers don't stack infinitely
+            user_scn.ngeom = 0  
+            
+            # Grab an empty geometry slot out of the context buffer
+            geom_idx = user_scn.ngeom
+            user_scn.ngeom += 1
+            
+            # Convert EKF heading (theta around Z) into a 3x3 rotation matrix for MuJoCo
+            cos_t = np.cos(est_theta)
+            sin_t = np.sin(est_theta)
+            # Z-axis rotation matrix flattened in row-major layout
+            r_mat = np.array([
+                cos_t, -sin_t, 0.0,
+                sin_t,  cos_t, 0.0,
+                0.0,    0.0,   1.0
+            ], dtype=np.float32)
 
-            with viewer.lock():
-                # 5. Synchronize your Estimate to the Ghost Container
-                # Copy the physical joint states (like wheel spinning positions) so the shapes match
-                data_ghost.qpos[:] = data.qpos[:]
-                
-                # Override the root 2D pose with your EKF's estimated values
-                # In a 3D "freejoint", qpos[0:2] = X,Y and qpos[3:7] = Quaternion orientation
-                data_ghost.qpos[0] = est_x
-                data_ghost.qpos[1] = est_y
-                
-                # Convert your 1D heading angle (est_theta) to a 3D Z-axis quaternion [w, x, y, z]
-                data_ghost.qpos[3] = np.cos(est_theta / 2.0)  # w
-                data_ghost.qpos[4] = 0.0                      # x
-                data_ghost.qpos[5] = 0.0                      # y
-                data_ghost.qpos[6] = np.sin(est_theta / 2.0)  # z
-
-                # Force MuJoCo to calculate the positions of all internal child meshes/links
-                mujoco.mj_forward(model, data_ghost)
-
-                # 6. Draw the True Skeleton Ghost to the Screen
-                user_scn = viewer.user_scn
-                if user_scn is not None:
-                    user_scn.ngeom = 0  # Clear previous frame's ghost shapes
-                    
-                    # Extract all geoms from data_ghost and push them into the overlay buffer
-                    mujoco.mjv_addGeoms(
-                        model, 
-                        data_ghost, 
-                        vopt_ghost, 
-                        pert_empty, 
-                        catmask_dynamic, 
-                        user_scn
-                    )
-
+            # Initialize a box geometry representing the Waffle Pi footprint
+            mujoco.mjv_initGeom(
+                user_scn.geoms[geom_idx],
+                type=mujoco.mjtGeom.mjGEOM_BOX,
+                size=[0.14, 0.14, 0.05],                       # Match base dimensions [x, y, z]
+                pos=[est_x, est_y, 0.05],                      # EKF positions (raised slightly off floor)
+                mat=r_mat,                                     # Calculated rotation matrix orientation
+                rgba=[0.0, 1.0, 0.0, 0.4]                      # Semi-transparent green (R, G, B, Alpha)
+            )
 
         # Print state telemetry cleanly
-        if data.time % 0.5 < dt:
+        if data.time % 0.1 < dt:
             print(f"Time: {data.time:.2f}s | Estimated Pose: X={current_pose[0]:.3f}, Y={current_pose[1]:.3f}, Heading={math.degrees(current_pose[2]):.1f}°")
 
         viewer.sync()
