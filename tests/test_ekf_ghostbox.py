@@ -34,7 +34,7 @@ catmask_dynamic = mujoco.mjtCatBit.mjCAT_DYNAMIC
 
 imu = IMUSensor(model)
 encoder = WheelEncoder(model)
-ekf = RobotEKF()
+ekf = RobotEKF(model=model)
 
 dt = model.opt.timestep
 

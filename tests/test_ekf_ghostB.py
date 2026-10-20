@@ -32,7 +32,7 @@ g_qpos_adr = model.jnt_qposadr[ghost_jnt_id]
 # Initialize software stacks
 imu = IMUSensor(model)
 encoder = WheelEncoder(model)
-ekf = RobotEKF()
+ekf = RobotEKF(model=model)
 
 # State telemetry printing control
 last_print_time = 0.0

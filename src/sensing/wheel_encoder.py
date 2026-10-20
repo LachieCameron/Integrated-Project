@@ -1,13 +1,18 @@
 import mujoco
 import numpy as np
 
+from src.kinematics.robot_parameters import parameters_from_model
+
 class WheelEncoder:
     def __init__(self, model, 
                  left_pos_name="wheel_left_encoder", 
                  right_pos_name="wheel_right_encoder",
                  left_vel_name="wheel_left_velocity",
-                 right_vel_name="wheel_right_velocity", 
-                 radius=0.033):
+                 right_vel_name="wheel_right_velocity",
+                 radius=None):
+        model_parameters = parameters_from_model(model)
+        if radius is None:
+            radius = model_parameters.wheel_radius
         
         # Look up flat memory array slice addresses for position sensors
         self.lp_adr = model.sensor_adr[mujoco.mj_name2id(model, mujoco.mjtObj.mjOBJ_SENSOR, left_pos_name)]
@@ -17,7 +22,7 @@ class WheelEncoder:
         self.lv_adr = model.sensor_adr[mujoco.mj_name2id(model, mujoco.mjtObj.mjOBJ_SENSOR, left_vel_name)]
         self.rv_adr = model.sensor_adr[mujoco.mj_name2id(model, mujoco.mjtObj.mjOBJ_SENSOR, right_vel_name)]
         
-        self.radius = radius
+        self.radius = float(radius)
         self.prev_l = 0.0
         self.prev_r = 0.0
         self.initialized = False

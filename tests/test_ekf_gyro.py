@@ -22,5 +22,4 @@ def test_wheel_difference_is_fallback_when_gyro_is_stationary():
 
 def test_rejects_invalid_inputs():
     with pytest.raises(ValueError, match="dt"):
-        RobotEKFGyro().update(0.0, 0.0, 0.0, 0.0)
-
+        RobotEKFGyro(wheel_base=0.288).update(0.0, 0.0, 0.0, 0.0)

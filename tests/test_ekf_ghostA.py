@@ -34,7 +34,7 @@ catmask = mujoco.mjtCatBit.mjCAT_DYNAMIC
 
 imu = IMUSensor(model)
 encoder = WheelEncoder(model)
-ekf = RobotEKF()
+ekf = RobotEKF(model=model)
 
 dt = model.opt.timestep
 
@@ -44,7 +44,7 @@ with mujoco.viewer.launch_passive(model, data) as viewer:
         start_time = time.time()
 
         # 1. Controller: command wheel velocities directly (rad/s)
-        data.ctrl[0] = -3.0  # Left motor
+        data.ctrl[0] = -2.0  # Left motor
         data.ctrl[1] = 3.0  # Right motor
 
         # 2. Physics Step

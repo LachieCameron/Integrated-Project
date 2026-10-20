@@ -1,6 +1,9 @@
 """Wheel-odometry extended Kalman filter for a differential-drive robot."""
 
 import numpy as np
+import mujoco
+
+from src.kinematics.robot_parameters import parameters_from_model
 
 
 def _wrap_angle(angle: float) -> float:
@@ -19,12 +22,16 @@ class RobotEKF:
 
     def __init__(
         self,
-        wheel_base: float = 0.287,
+        model: mujoco.MjModel | None = None,
+        wheel_base: float | None = None,
         wheel_distance_std: float = 0.002,
         initial_state: np.ndarray | None = None,
         initial_covariance: np.ndarray | None = None,
     ) -> None:
-        if wheel_base <= 0.0:
+        if model is not None:
+            model_parameters = parameters_from_model(model)
+            wheel_base = model_parameters.wheel_base
+        if wheel_base is None or wheel_base <= 0.0:
             raise ValueError("wheel_base must be positive")
         if wheel_distance_std <= 0.0:
             raise ValueError("wheel_distance_std must be positive")

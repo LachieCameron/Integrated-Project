@@ -6,6 +6,9 @@ gyro-assisted approach can be evaluated and fused later.
 """
 
 import numpy as np
+import mujoco
+
+from src.kinematics.robot_parameters import parameters_from_model
 
 
 class RobotEKFGyro:
@@ -17,8 +20,14 @@ class RobotEKFGyro:
     until the gyro is fused with a defined measurement-noise model.
     """
 
-    def __init__(self, wheel_base: float = 0.287) -> None:
-        if wheel_base <= 0.0:
+    def __init__(
+        self,
+        model: mujoco.MjModel | None = None,
+        wheel_base: float | None = None,
+    ) -> None:
+        if model is not None:
+            wheel_base = parameters_from_model(model).wheel_base
+        if wheel_base is None or wheel_base <= 0.0:
             raise ValueError("wheel_base must be positive")
 
         self.L = float(wheel_base)
@@ -50,4 +59,3 @@ class RobotEKFGyro:
         self.state[1] += d_center * np.sin(self.state[2])
         self.state[2] = (self.state[2] + d_theta) % (2.0 * np.pi)
         return self.state.copy()
-

@@ -5,7 +5,7 @@ from src.estimation.ekf import RobotEKF
 
 
 def test_straight_wheel_odometry():
-    ekf = RobotEKF()
+    ekf = RobotEKF(wheel_base=0.288)
 
     for _ in range(10):
         ekf.update(0.01, 0.01, 0.1)
@@ -24,8 +24,8 @@ def test_wheel_odometry_turns_using_wheel_difference():
 
 
 def test_gyro_value_cannot_change_wheel_odometry_prediction():
-    first = RobotEKF()
-    second = RobotEKF()
+    first = RobotEKF(wheel_base=0.288)
+    second = RobotEKF(wheel_base=0.288)
 
     first.update(0.02, 0.01, 0.1)
     second.update(0.02, 0.01, 0.1)
@@ -36,6 +36,7 @@ def test_gyro_value_cannot_change_wheel_odometry_prediction():
 
 def test_absolute_pose_correction_reduces_drifted_state():
     ekf = RobotEKF(
+        wheel_base=0.288,
         initial_state=np.array([1.0, -0.5, 0.4]),
         initial_covariance=np.eye(3) * 0.1,
     )
@@ -52,6 +53,7 @@ def test_absolute_pose_correction_reduces_drifted_state():
 
 def test_yaw_correction_wraps_innovation_across_pi():
     ekf = RobotEKF(
+        wheel_base=0.288,
         initial_state=np.array([0.0, 0.0, np.pi - 0.01]),
         initial_covariance=np.eye(3) * 0.1,
     )
@@ -67,4 +69,4 @@ def test_yaw_correction_wraps_innovation_across_pi():
 )
 def test_rejects_non_finite_wheel_distances(d_left, d_right):
     with pytest.raises(ValueError, match="wheel distances"):
-        RobotEKF().update(d_left, d_right, 0.1)
+        RobotEKF(wheel_base=0.288).update(d_left, d_right, 0.1)
