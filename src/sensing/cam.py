@@ -33,7 +33,7 @@ class RaspiCamera:
         self.renderer.update_scene(data, camera=self.cam_id)
         rgb_image = self.renderer.render()
         
-        # Transform: Flip vertically (MuJoCo bottom-left to OpenCV top-left) and map RGB->BGR
+        # Transform:  (MuJoCo bottom-left to OpenCV top-left) and map RGB->BGR
         cv_image = cv2.cvtColor(rgb_image, cv2.COLOR_RGB2BGR)
         return cv_image
 

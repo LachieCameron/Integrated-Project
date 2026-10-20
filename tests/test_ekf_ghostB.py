@@ -54,7 +54,7 @@ def simulation_callback(model, data):
     accel, gyro = imu.read(data)
 
     # 3. State Estimation (Passing index 2 for the Z-axis yaw rate)
-    current_pose = ekf.update(d_left, d_right, gyro[2], dt)
+    current_pose = ekf.update(d_left, d_right, dt)
     est_x, est_y, est_theta = current_pose[0], current_pose[1], current_pose[2]
 
     # 4. Position the Native Visual Ghost

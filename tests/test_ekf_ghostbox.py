@@ -55,7 +55,7 @@ with mujoco.viewer.launch_passive(model, data) as viewer:
         accel, gyro = imu.read(data)
 
         # 4. State Estimation
-        current_pose = ekf.update(d_left, d_right, gyro[2], dt)
+        current_pose = ekf.update(d_left, d_right, dt)
         est_x, est_y, est_theta = current_pose[0], current_pose[1], current_pose[2]
 
 
