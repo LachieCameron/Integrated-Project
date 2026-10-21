@@ -85,7 +85,7 @@ class TagFollower:
 
             # Proximity metric calculations: Compute Euclidean distance between top-left [0] and top-right [1] vertices
             marker_width_px = np.linalg.norm(marker_corners[0] - marker_corners[1])
-            target_width_px = 160.0
+            target_width_px = 250.0
             error_linear = (target_width_px - marker_width_px) / target_width_px
 
             # Control Law calculations
