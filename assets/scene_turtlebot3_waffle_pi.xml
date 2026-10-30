@@ -40,6 +40,12 @@
      <material name="aruco_material_00" texture="aruco_texture_00" specular="0.1" shininess="0.1"/>
 
 
+     <texture name="aruco_texture_99" type="2d" file="textures/aruco_99.png"/>
+     <material name="aruco_material_99" texture="aruco_texture_99" specular="0.1" shininess="0.1"/>
+
+     
+
+
   </asset>
 
 
@@ -100,26 +106,43 @@
           rgba="0.9 0.7 0.2 1"/>
 
     <!-- Charging station placeholder -->
-    <!--          Green Block         -->
+    <!--          Grey Block        -->
     <geom name="charging_station"
           type="box"
           pos="2.4 2.65 0.1"
           size="0.35 0.15 0.1"
-          rgba="0.1 0.8 0.3 0.2"/>
+          rgba="0.5 0.5 0.5 1"/>
+
+     <geom name="charging_area"
+          type="box"
+          pos="2.4 2.15 0.1"
+          size="0.35 0.35 0.05"
+          rgba="0.1 0.8 0.3 0.05"
+          contype="0"
+          conaffinity="0"/>
 
 
-          <!-- contype="0"
-          conaffinity="0"/> -->
     <geom name="calibration_marker"
           type="box"
           pos="0 2.7 0.5"
           size="0.556 0.001 0.359"
           material="cal_checkerboard_material"/>
 
-    <geom name="aruco_marker"
+
+    <!-- 100x100mm Dock Tag -->
+    <geom name="aruco_marker_00"
           type="box"
-          pos="2.4 2.5 0.2"
+          pos="2.4 2.5 0.3"
           size="0.1 0.001 0.1"
           material="aruco_material_00"/>
+
+
+    <!-- 50x50mm Fine Dock Tag -->
+    <geom name="aruco_marker_99"
+          type="box"
+          pos="2.4 2.5 0.1"
+          size="0.05 0.001 0.05"
+          material="aruco_material_99"/>
+      
   </worldbody>
 </mujoco>
