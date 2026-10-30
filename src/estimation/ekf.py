@@ -6,7 +6,7 @@ import mujoco
 from src.kinematics.robot_parameters import parameters_from_model
 
 
-def _wrap_angle(angle: float) -> float:
+def wrap_angle(angle: float) -> float:
     """Return an angle in the interval [-pi, pi)."""
     return float((angle + np.pi) % (2.0 * np.pi) - np.pi)
 
@@ -53,7 +53,7 @@ class RobotEKF:
             raise ValueError("initial_state must have shape (3,)")
         if self.P.shape != (3, 3):
             raise ValueError("initial_covariance must have shape (3, 3)")
-        self.state[2] = _wrap_angle(float(self.state[2]))
+        self.state[2] = wrap_angle(float(self.state[2]))
 
     def predict(self, d_left: float, d_right: float) -> np.ndarray:
         """Propagate pose and covariance from one pair of wheel distances."""
@@ -69,7 +69,7 @@ class RobotEKF:
 
         self.state[0] += d_center * np.cos(midpoint_yaw)
         self.state[1] += d_center * np.sin(midpoint_yaw)
-        self.state[2] = _wrap_angle(yaw + d_yaw)
+        self.state[2] = wrap_angle(yaw + d_yaw)
 
         # Jacobian of the midpoint differential-drive motion model.
         F = np.eye(3)
@@ -134,7 +134,7 @@ class RobotEKF:
             raise ValueError("covariance must be symmetric")
 
         innovation = measurement - self.state
-        innovation[2] = _wrap_angle(float(innovation[2]))
+        innovation[2] = wrap_angle(float(innovation[2]))
         innovation_covariance = self.P + covariance
 
         try:
@@ -146,7 +146,7 @@ class RobotEKF:
             raise ValueError("measurement covariance is not positive definite") from exc
 
         self.state += gain @ innovation
-        self.state[2] = _wrap_angle(float(self.state[2]))
+        self.state[2] = wrap_angle(float(self.state[2]))
         identity = np.eye(3)
         self.P = (identity - gain) @ self.P
         self.P = 0.5 * (self.P + self.P.T)
@@ -157,11 +157,11 @@ class RobotEKF:
         if not np.isfinite(yaw) or not np.isfinite(variance) or variance <= 0.0:
             raise ValueError("yaw and variance must be finite; variance must be positive")
 
-        innovation = _wrap_angle(float(yaw) - float(self.state[2]))
+        innovation = wrap_angle(float(yaw) - float(self.state[2]))
         innovation_variance = float(self.P[2, 2] + variance)
         gain = self.P[:, 2] / innovation_variance
         self.state += gain * innovation
-        self.state[2] = _wrap_angle(float(self.state[2]))
+        self.state[2] = wrap_angle(float(self.state[2]))
         self.P -= np.outer(gain, self.P[2, :])
         self.P = 0.5 * (self.P + self.P.T)
         return self.state.copy()

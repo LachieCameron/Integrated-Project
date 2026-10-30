@@ -1,0 +1,60 @@
+robot:
+  wheel_base: null
+  wheel_radius_left: null
+  wheel_radius_right: null
+  max_wheel_speed: null
+
+ekf:
+  wheel_distance_std: 0.002
+  initial_covariance:
+    x: 0.01
+    y: 0.01
+    yaw: 0.01
+
+  camera_measurement_covariance:
+    x: 0.02
+    y: 0.02
+    yaw: 0.05
+
+  gyro_enabled: false
+  gyro_rate_std: 0.03
+
+lqr:
+  q:
+    x: 1.0
+    y: 1.0
+    yaw: 0.5
+  r:
+    linear_velocity: 0.1
+    angular_velocity: 0.1
+  max_linear_velocity: 0.15
+  max_angular_velocity: 0.8
+
+tag_follower:
+  target_ids: [0, 99]
+  kp_linear: 0.6
+  kp_angular: 1.8
+  scan_speed: 0.4
+  target_width_pixels: 250.0
+
+
+obstacle_avoidance:
+  stop_distance: 0.20
+  slow_distance: 0.40
+  avoid_distance: 0.50
+  turn_angle_deg: 35.0
+
+
+camera:
+  calibration_file: null
+  marker_size_m: 0.20
+  aruco_dictionary: DICT_5X5_50
+  detection_rate_hz: 30
+
+
+evaluation:
+  trial_count: 20
+  timeout_s: 150.0
+  encoder_noise_std: 0.0
+  odometry_scale_error: 0.0
+  random_seed: 0
