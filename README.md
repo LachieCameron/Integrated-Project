@@ -70,3 +70,7 @@ TODO: state the tools used and what they were used for. Update this as your usag
 ## 12. Acknowledgements
 
 TODO: list code adapted from the weekly tutorials, MuJoCo examples, the Robotics Toolbox, and the source of the TurtleBot3 MuJoCo model.
+
+ArUco Marker Generation: [text](https://chev.me/arucogen/)
+
+MuJoCo Documentation: 
