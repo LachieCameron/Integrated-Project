@@ -14,6 +14,109 @@ class DiffDriveController:
         right_vel = np.clip(right_vel, -self.max_limit, self.max_limit)
         return left_vel, right_vel
 
+class PoseTracker:
+    """State-feedback controller using estimated robot pose."""
+
+    def __init__(self, k_rho=0.8, k_alpha=1.8,
+                 k_beta=-0.5, max_v=0.15, max_w=0.8):
+        self.k_rho = k_rho
+        self.k_alpha = k_alpha
+        self.k_beta = k_beta
+        self.max_v = max_v
+        self.max_w = max_w
+
+    def command(self, estimated_pose, target_pose, final=False):
+        """
+        State-feedback navigation using EKF estimated pose.
+
+        Returns:
+            v_cmd: linear velocity (m/s)
+            w_cmd: angular velocity (rad/s)
+            reached: whether the target pose has been reached
+        """
+
+        x, y, theta = estimated_pose
+        gx, gy, gtheta = target_pose
+
+        distance = np.hypot(gx - x, gy - y)
+
+        heading_error = np.arctan2(
+            np.sin(gtheta - theta),
+            np.cos(gtheta - theta)
+        )
+
+        # Position and orientation tolerances
+        position_tolerance = 0.05
+        heading_tolerance = 0.08
+
+        # Check whether target position has been reached
+        if distance < position_tolerance:
+
+            if not final:
+                return 0.0, 0.0, True
+
+            # Final docking requires correct orientation
+            if abs(heading_error) < heading_tolerance:
+                return 0.0, 0.0, True
+
+            # Rotate to final docking orientation
+            w_cmd = np.clip(
+                1.5 * heading_error,
+                -self.max_w,
+                self.max_w
+            )
+
+            return 0.0, float(w_cmd), False
+
+        # Use existing state-feedback controller
+        v_cmd, w_cmd = self.compute_commands(
+            estimated_pose,
+            target_pose
+        )
+
+        return v_cmd, w_cmd, False
+    def compute_commands(self, estimated_pose, target_pose):
+        x, y, theta = estimated_pose
+        gx, gy, gtheta = target_pose
+
+        dx = gx - x
+        dy = gy - y
+
+        rho = np.hypot(dx, dy)
+
+        if rho < 0.05:
+            angle_error = np.arctan2(
+                np.sin(gtheta - theta),
+                np.cos(gtheta - theta)
+            )
+            if abs(angle_error) < 0.08:
+                return 0.0, 0.0
+
+            return 0.0, float(np.clip(
+                1.5 * angle_error, -self.max_w, self.max_w
+            ))
+
+        alpha = np.arctan2(
+            np.sin(np.arctan2(dy, dx) - theta),
+            np.cos(np.arctan2(dy, dx) - theta)
+        )
+
+        beta = np.arctan2(
+            np.sin(gtheta - theta - alpha),
+            np.cos(gtheta - theta - alpha)
+        )
+
+        linear_v = self.k_rho * rho
+        angular_w = self.k_alpha * alpha + self.k_beta * beta
+
+        # Rotate toward the target before moving forward.
+        if abs(alpha) > 0.6:
+            linear_v = 0.0
+
+        return (
+            float(np.clip(linear_v, 0.0, self.max_v)),
+            float(np.clip(angular_w, -self.max_w, self.max_w))
+        )
 
 class TagFollower:
     def __init__(self, target_id=0, image_width=640, Kp_linear=0.6, Kp_angular=1.8, scan_speed=0.4):
