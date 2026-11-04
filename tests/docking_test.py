@@ -1,23 +1,5 @@
 
 #!/usr/bin/env python3
-"""
-MuJoCo TurtleBot3:
-Two-stage ArUco docking with LiDAR obstacle avoidance.
-
-Sequence:
-1. Start by tracking ONLY ID 0.
-2. Approach ID 0 until it reaches COARSE_SWITCH_WIDTH.
-3. Confirm ID 99, then switch the target permanently.
-4. Approach and align with ID 99.
-5. Display ROBOT CHARGED and stop all wheel commands.
-
-Run:
-    PYTHONPATH=. python3 tests/test_tag_obstacle.py
-
-IMPORTANT:
-    src/sensing/cam.py must use DICT_5X5_100.
-"""
-
 import os
 import sys
 import math
