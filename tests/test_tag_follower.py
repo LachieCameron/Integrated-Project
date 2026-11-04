@@ -42,7 +42,7 @@ def main():
     diff_drive = DiffDriveController()
     
     # Initialize the 5x5 tag follower (passing image resolution width)
-    follower = TagFollower(target_id=0, image_width=camera.width)
+    follower = TagFollower(target_ids=(0, 99), image_width=camera.width)
 
     print("\n" + "="*60)
     print("  AUTONOMOUS INTEGRATED SENSING & CONTROL PIPELINE BOOTED  ")

@@ -41,7 +41,7 @@ def main():
     camera = RaspiCamera(model)
     imu = IMUSensor(model)
     diff_drive = DiffDriveController()
-    follower = TagFollower(target_id=0, image_width=camera.width)
+    follower = TagFollower(target_ids=(0, 99), image_width=camera.width)
 
     # MuJoCo rangefinders must already be defined in the XML.
     lidar_ids = []

@@ -31,8 +31,8 @@
               reflectance="0"/>
 
 <!-- cal_checkerboard -->
-      <texture name="cal_checkerboard" type="2d" file="textures/cal_checkerboard.png" />
-      <material name="cal_checkerboard_material" texture="cal_checkerboard" specular="0.1" shininess="0.1"/>
+      <!-- <texture name="cal_checkerboard" type="2d" file="textures/cal_checkerboard.png" />
+      <material name="cal_checkerboard_material" texture="cal_checkerboard" specular="0.1" shininess="0.1"/> -->
 
 <!-- Aruco tags -->
 
@@ -122,11 +122,11 @@
           conaffinity="0"/>
 
 
-    <geom name="calibration_marker"
+    <!-- <geom name="calibration_marker"
           type="box"
           pos="0 2.7 0.5"
           size="0.556 0.001 0.359"
-          material="cal_checkerboard_material"/>
+          material="cal_checkerboard_material"/> -->
 
 
     <!-- 100x100mm Dock Tag -->
