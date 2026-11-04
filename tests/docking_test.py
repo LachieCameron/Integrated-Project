@@ -1,243 +1,1004 @@
-#!/usr/bin/env python3
-"""MuJoCo TurtleBot3: original TagFollower + LiDAR, with ID 0 -> ID 99 handoff.
 
-Place this file at tests/test_tag_obstacle.py.
-Run from project root: PYTHONPATH=. python3 tests/test_tag_obstacle.py
+#!/usr/bin/env python3
 """
+MuJoCo TurtleBot3:
+Two-stage ArUco docking with LiDAR obstacle avoidance.
+
+Sequence:
+1. Start by tracking ONLY ID 0.
+2. Approach ID 0 until it reaches COARSE_SWITCH_WIDTH.
+3. Confirm ID 99, then switch the target permanently.
+4. Approach and align with ID 99.
+5. Display ROBOT CHARGED and stop all wheel commands.
+
+Run:
+    PYTHONPATH=. python3 tests/test_tag_obstacle.py
+
+IMPORTANT:
+    src/sensing/cam.py must use DICT_5X5_100.
+"""
+
 import os
 import sys
 import math
-import numpy as np
+
 import cv2
 import mujoco
 import mujoco.viewer
+import numpy as np
 
-project_root = os.path.abspath(os.path.join(os.path.dirname(__file__), '..'))
-if project_root not in sys.path:
-    sys.path.insert(0, project_root)
+
+# ============================================================
+# PROJECT IMPORTS
+# ============================================================
+
+PROJECT_ROOT = os.path.abspath(
+    os.path.join(os.path.dirname(__file__), "..")
+)
+
+if PROJECT_ROOT not in sys.path:
+    sys.path.insert(0, PROJECT_ROOT)
 
 from src.sensing.cam import RaspiCamera
 from src.sensing.IMU import IMUSensor
-from src.control.Tag_follow import DiffDriveController, TagFollower
+from src.control.Tag_follow import (
+    DiffDriveController,
+    TagFollower,
+)
+
+
+# ============================================================
+# CONFIGURATION
+# ============================================================
 
 CAM_INTERVAL = 1.0 / 30.0
-STOP_DISTANCE = 0.20
-CLEAR_DISTANCE = 0.40
-AVOID_DISTANCE = 0.50
-AVOID_TURN_RAD = math.radians(35)
-AVOID_FORWARD_V = 1.0  # Original request; wheel commands are limited below.
-AVOID_TURN_W = 0.45
-MAX_WHEEL_SPEED = 5.0
-ANGLES = np.arange(-90, 91, 15)
+DEBUG_PRINT_INTERVAL = 1.0
 
 COARSE_ID = 0
 FINE_ID = 99
-FINE_SWITCH_WIDTH = 20.0       # Pixels: tune from the on-screen ID99 width.
-FINE_CONFIRM_FRAMES = 2        # Consecutive camera frames.
-FINE_STOP_WIDTH = 125.0        # Pixels: tune for desired final docking distance.
-DEBUG_PRINT_INTERVAL = 1.0     # Seconds between detection debug messages.
+
+# ID 0 must reach this size before ID 99 is considered.
+COARSE_SWITCH_WIDTH = 100.0
+
+# ID 99 must be detected reliably before switching.
+FINE_SWITCH_WIDTH = 20.0
+FINE_CONFIRM_FRAMES = 2
+
+# Final charging conditions.
+FINE_STOP_WIDTH = 125.0
+FINE_ALIGNMENT_TOL = 0.12
+CHARGE_CONFIRM_FRAMES = 3
+
+# Set this to match the robot's actual spawn orientation.
+INITIAL_HEADING = math.pi / 2
+
+# Obstacle avoidance.
+STOP_DISTANCE = 0.20
+CLEAR_DISTANCE = 0.40
+
+AVOID_DISTANCE = 0.55
+AVOID_TURN_RAD = math.radians(35)
+AVOID_TURN_W = 0.50
+AVOID_FORWARD_V = 0.12
+
+# Fine docking speed limits.
+FINE_MAX_V = 0.08
+FINE_MAX_W = 0.45
+
+DOCK_SAFETY_DISTANCE = 0.12
+
+MAX_WHEEL_SPEED = 5.0
+WHEEL_RADIUS = 0.033
+
+ANGLES = np.arange(-90, 91, 15)
+
+
+# ============================================================
+# HELPER FUNCTIONS
+# ============================================================
+
+def wrap_angle(angle):
+    return math.atan2(
+        math.sin(angle),
+        math.cos(angle),
+    )
 
 
 def angle_difference(a, b):
-    return math.atan2(math.sin(a - b), math.cos(a - b))
+    return wrap_angle(a - b)
 
 
-def marker_width(corners, ids, target_id):
-    """Return average horizontal-edge length of a decoded ArUco marker in pixels."""
+def marker_measurement(corners, ids, target_id, image_width):
+    """
+    Return:
+        width: apparent marker width in pixels
+        error: normalized horizontal centre error
+    """
+
     if ids is None or corners is None:
-        return 0.0
-    for index, marker_id in enumerate(np.asarray(ids).reshape(-1)):
-        if int(marker_id) == target_id:
-            points = np.asarray(corners[index], dtype=float).reshape(4, 2)
-            top = np.linalg.norm(points[1] - points[0])
-            bottom = np.linalg.norm(points[2] - points[3])
-            return float((top + bottom) / 2.0)
-    return 0.0
+        return 0.0, None
 
+    for index, marker_id in enumerate(
+        np.asarray(ids).reshape(-1)
+    ):
+        if int(marker_id) != target_id:
+            continue
+
+        points = np.asarray(
+            corners[index],
+            dtype=float,
+        ).reshape(4, 2)
+
+        top = np.linalg.norm(
+            points[1] - points[0]
+        )
+
+        bottom = np.linalg.norm(
+            points[2] - points[3]
+        )
+
+        width = float((top + bottom) / 2.0)
+
+        centre_x = float(np.mean(points[:, 0]))
+        image_centre = image_width / 2.0
+
+        error = (
+            centre_x - image_centre
+        ) / image_centre
+
+        return width, error
+
+    return 0.0, None
+
+
+def filter_target(corners, ids, target_id):
+    """
+    Pass ONLY the active marker to TagFollower.
+
+    Other detected markers are ignored by navigation.
+    """
+
+    if ids is None or corners is None:
+        return [], None
+
+    selected_corners = []
+
+    for index, marker_id in enumerate(
+        np.asarray(ids).reshape(-1)
+    ):
+        if int(marker_id) == target_id:
+            selected_corners.append(corners[index])
+
+    if not selected_corners:
+        return [], None
+
+    selected_ids = np.full(
+        (len(selected_corners), 1),
+        target_id,
+        dtype=np.int32,
+    )
+
+    return selected_corners, selected_ids
+
+
+def draw_charged_banner(image):
+    height, width = image.shape[:2]
+
+    x1 = max(10, width // 2 - 230)
+    x2 = min(width - 10, width // 2 + 230)
+
+    y1 = min(205, height - 100)
+    y2 = min(y1 + 85, height - 10)
+
+    cv2.rectangle(
+        image,
+        (x1, y1),
+        (x2, y2),
+        (0, 145, 0),
+        -1,
+    )
+
+    cv2.putText(
+        image,
+        "ROBOT CHARGED",
+        (x1 + 30, y1 + 50),
+        cv2.FONT_HERSHEY_SIMPLEX,
+        1.05,
+        (255, 255, 255),
+        3,
+    )
+
+
+# ============================================================
+# MAIN
+# ============================================================
 
 def main():
-    xml_path = os.path.join(project_root, 'assets', 'scene_turtlebot3_waffle_pi.xml')
+
+    xml_path = os.path.join(
+        PROJECT_ROOT,
+        "assets",
+        "scene_turtlebot3_waffle_pi.xml",
+    )
+
     if not os.path.isfile(xml_path):
-        raise FileNotFoundError(f'Missing XML: {xml_path}')
+        raise FileNotFoundError(
+            f"Missing XML: {xml_path}"
+        )
 
     model = mujoco.MjModel.from_xml_path(xml_path)
     data = mujoco.MjData(model)
+
     camera = RaspiCamera(model)
     imu = IMUSensor(model)
     diff_drive = DiffDriveController()
-    follower = TagFollower(target_id=COARSE_ID, image_width=camera.width)
+
+    follower = TagFollower(
+        target_id=COARSE_ID,
+        image_width=camera.width,
+    )
+
+    # ========================================================
+    # SENSOR AND ACTUATOR LOOKUP
+    # ========================================================
 
     lidar_ids = []
+
     for angle in ANGLES:
-        name = f'lidar_{int(angle)}'
-        sid = mujoco.mj_name2id(model, mujoco.mjtObj.mjOBJ_SENSOR, name)
+
+        name = f"lidar_{int(angle)}"
+
+        sid = mujoco.mj_name2id(
+            model,
+            mujoco.mjtObj.mjOBJ_SENSOR,
+            name,
+        )
+
         if sid < 0 or model.sensor_dim[sid] != 1:
-            raise RuntimeError(f'Missing or invalid LiDAR sensor: {name}')
+            raise RuntimeError(
+                f"Missing or invalid LiDAR: {name}"
+            )
+
         lidar_ids.append(sid)
 
-    base_id = mujoco.mj_name2id(model, mujoco.mjtObj.mjOBJ_BODY, 'base')
-    if base_id < 0:
-        raise RuntimeError('Missing body named "base" in XML')
-    left_actuator = mujoco.mj_name2id(model, mujoco.mjtObj.mjOBJ_ACTUATOR, 'wheel_left')
-    right_actuator = mujoco.mj_name2id(model, mujoco.mjtObj.mjOBJ_ACTUATOR, 'wheel_right')
-    if left_actuator < 0 or right_actuator < 0:
-        raise RuntimeError('Missing wheel_left or wheel_right actuator')
+    def find_sensor(name):
 
-    heading = 0.0
+        sid = mujoco.mj_name2id(
+            model,
+            mujoco.mjtObj.mjOBJ_SENSOR,
+            name,
+        )
+
+        if sid < 0:
+            raise RuntimeError(
+                f"Missing sensor: {name}"
+            )
+
+        if model.sensor_dim[sid] != 1:
+            raise RuntimeError(
+                f"Invalid sensor dimension: {name}"
+            )
+
+        return sid
+
+    left_encoder_id = find_sensor(
+        "wheel_left_encoder"
+    )
+
+    right_encoder_id = find_sensor(
+        "wheel_right_encoder"
+    )
+
+    left_actuator = mujoco.mj_name2id(
+        model,
+        mujoco.mjtObj.mjOBJ_ACTUATOR,
+        "wheel_left",
+    )
+
+    right_actuator = mujoco.mj_name2id(
+        model,
+        mujoco.mjtObj.mjOBJ_ACTUATOR,
+        "wheel_right",
+    )
+
+    if left_actuator < 0 or right_actuator < 0:
+        raise RuntimeError(
+            "Missing wheel_left or wheel_right actuator"
+        )
+
+    # ========================================================
+    # ROBOT STATE
+    # ========================================================
+
+    heading = INITIAL_HEADING
+
     last_sim_time = float(data.time)
     last_cam_time = -CAM_INTERVAL
-    desired_v, desired_w = 0.0, 0.0
-    mode = 'FOLLOW'
-    turn_start_heading = 0.0
-    turn_direction = 1
-    forward_start = np.zeros(2)
-    last_message_mode = None
-    fine_detected_frames = 0
-    fine_locked = False
     last_debug_time = -DEBUG_PRINT_INTERVAL
 
-    def lidar_distances(data):
+    desired_v = 0.0
+    desired_w = 0.0
+
+    mode = "FOLLOW"
+    docking_phase = "COARSE"
+
+    # Coarse approach must complete before fine detection
+    # is allowed to trigger a target change.
+    coarse_ready = False
+
+    fine_detected_frames = 0
+    charge_detected_frames = 0
+
+    fine_locked = False
+    robot_charged = False
+
+    turn_start_heading = heading
+    turn_direction = 1
+
+    travelled_distance = 0.0
+    avoid_start_distance = 0.0
+
+    last_left_encoder = None
+    last_right_encoder = None
+
+    last_annotated = None
+    last_message_mode = None
+
+    # ========================================================
+    # LIDAR HELPERS
+    # ========================================================
+
+    def lidar_distances():
+
         values = []
+
         for sid in lidar_ids:
-            value = float(data.sensordata[model.sensor_adr[sid]])
-            values.append(value if np.isfinite(value) and value >= 0 else math.inf)
+
+            value = float(
+                data.sensordata[
+                    model.sensor_adr[sid]
+                ]
+            )
+
+            if not np.isfinite(value) or value < 0:
+                value = math.inf
+
+            values.append(value)
+
         return np.asarray(values)
 
     def sector_min(distances, low, high):
-        return float(np.min(distances[(ANGLES >= low) & (ANGLES <= high)]))
+
+        mask = (
+            (ANGLES >= low)
+            & (ANGLES <= high)
+        )
+
+        return float(np.min(distances[mask]))
+
+    # ========================================================
+    # CONTROL CALLBACK
+    # ========================================================
 
     def control_loop(model, data):
-        nonlocal heading, last_sim_time, last_cam_time, desired_v, desired_w
-        nonlocal mode, turn_start_heading, turn_direction, forward_start
-        nonlocal last_message_mode, fine_detected_frames, fine_locked, last_debug_time
+
+        nonlocal follower
+        nonlocal heading
+        nonlocal last_sim_time, last_cam_time
+        nonlocal last_debug_time
+        nonlocal desired_v, desired_w
+        nonlocal mode, docking_phase
+        nonlocal coarse_ready
+        nonlocal fine_detected_frames
+        nonlocal charge_detected_frames
+        nonlocal fine_locked, robot_charged
+        nonlocal turn_start_heading, turn_direction
+        nonlocal travelled_distance, avoid_start_distance
+        nonlocal last_left_encoder, last_right_encoder
+        nonlocal last_annotated, last_message_mode
 
         now = float(data.time)
+
+        # ====================================================
+        # SIMULATION RESET
+        # ====================================================
+
         if now < last_sim_time - 1e-9:
-            # Viewer reset: reconstruct the follower so the original scan runs again.
-            nonlocal follower
-            follower = TagFollower(target_id=COARSE_ID, image_width=camera.width)
-            heading = 0.0
+
+            follower = TagFollower(
+                target_id=COARSE_ID,
+                image_width=camera.width,
+            )
+
+            heading = INITIAL_HEADING
+
             last_cam_time = now - CAM_INTERVAL
-            desired_v = desired_w = 0.0
-            mode = 'FOLLOW'
-            fine_detected_frames = 0
-            fine_locked = False
-            last_message_mode = None
             last_debug_time = now - DEBUG_PRINT_INTERVAL
+
+            desired_v = 0.0
+            desired_w = 0.0
+
+            mode = "FOLLOW"
+            docking_phase = "COARSE"
+
+            coarse_ready = False
+            fine_detected_frames = 0
+            charge_detected_frames = 0
+
+            fine_locked = False
+            robot_charged = False
+
+            turn_start_heading = heading
+            turn_direction = 1
+
+            travelled_distance = 0.0
+            avoid_start_distance = 0.0
+
+            last_left_encoder = None
+            last_right_encoder = None
+
+            last_annotated = None
+            last_message_mode = None
+
         dt = max(0.0, now - last_sim_time)
         last_sim_time = now
 
+        # ====================================================
+        # ROBOT CHARGED: STOP ALL MOVEMENT
+        # ====================================================
+
+        if robot_charged:
+
+            desired_v = 0.0
+            desired_w = 0.0
+
+            data.ctrl[left_actuator] = 0.0
+            data.ctrl[right_actuator] = 0.0
+
+            if now - last_cam_time >= CAM_INTERVAL:
+
+                last_cam_time = now
+
+                if last_annotated is not None:
+
+                    display = last_annotated.copy()
+                    draw_charged_banner(display)
+
+                    cv2.imshow(
+                        "TurtleBot3 - Two Stage Docking",
+                        display,
+                    )
+
+                    cv2.waitKey(1)
+
+            return
+
+        # ====================================================
+        # IMU HEADING
+        # ====================================================
+
         _, gyro = imu.read(data)
-        if abs(float(gyro[2])) > 0.001:
-            heading += float(gyro[2]) * dt
-        heading = angle_difference(heading, 0.0)
 
-        distances = lidar_distances(data)
-        front = sector_min(distances, -30, 30)
-        left = sector_min(distances, 45, 90)
-        right = sector_min(distances, -90, -45)
-        # Retained from original test; ground truth must be replaced for final rubric.
-        position = np.asarray(data.xpos[base_id, :2]).copy()
+        gyro_z = float(gyro[2])
 
-        if mode == 'FOLLOW' and desired_v > 0 and front < STOP_DISTANCE:
-            mode = 'AVOID_TURN'
+        if abs(gyro_z) > 0.001:
+            heading += gyro_z * dt
+
+        heading = wrap_angle(heading)
+
+        # ====================================================
+        # WHEEL ENCODER DISTANCE
+        # ====================================================
+
+        left_encoder = float(
+            data.sensordata[
+                model.sensor_adr[left_encoder_id]
+            ]
+        )
+
+        right_encoder = float(
+            data.sensordata[
+                model.sensor_adr[right_encoder_id]
+            ]
+        )
+
+        if (
+            last_left_encoder is not None
+            and last_right_encoder is not None
+        ):
+
+            dl = (
+                left_encoder - last_left_encoder
+            ) * WHEEL_RADIUS
+
+            dr = (
+                right_encoder - last_right_encoder
+            ) * WHEEL_RADIUS
+
+            ds = (dl + dr) / 2.0
+
+            travelled_distance += abs(ds)
+
+        last_left_encoder = left_encoder
+        last_right_encoder = right_encoder
+
+        # ====================================================
+        # LIDAR
+        # ====================================================
+
+        distances = lidar_distances()
+
+        front = sector_min(
+            distances, -30, 30
+        )
+
+        left = sector_min(
+            distances, 45, 90
+        )
+
+        right = sector_min(
+            distances, -90, -45
+        )
+
+        # ====================================================
+        # OBSTACLE AVOIDANCE
+        # ====================================================
+
+        if (
+            mode == "FOLLOW"
+            and docking_phase == "COARSE"
+            and desired_v > 0
+            and front < STOP_DISTANCE
+        ):
+
+            mode = "AVOID_TURN"
+
             turn_start_heading = heading
-            turn_direction = 1 if left >= right else -1
 
-        if mode == 'AVOID_TURN':
-            turned = turn_direction * angle_difference(heading, turn_start_heading)
+            turn_direction = (
+                1 if left >= right else -1
+            )
+
+        if mode == "AVOID_TURN":
+
+            turned = (
+                turn_direction
+                * angle_difference(
+                    heading,
+                    turn_start_heading,
+                )
+            )
+
             if turned >= AVOID_TURN_RAD:
-                mode = 'AVOID_FORWARD'
-                forward_start = position.copy()
-                desired_v, desired_w = 0.0, 0.0
-            else:
-                desired_v, desired_w = 0.0, AVOID_TURN_W * turn_direction
 
-        elif mode == 'AVOID_FORWARD':
-            travelled = float(np.linalg.norm(position - forward_start))
-            if front < STOP_DISTANCE:
-                mode = 'AVOID_TURN'
-                turn_start_heading = heading
-                turn_direction = 1 if left >= right else -1
-                desired_v, desired_w = 0.0, 0.0
-            elif travelled >= AVOID_DISTANCE:
-                mode = 'FOLLOW'
-                desired_v, desired_w = 0.0, 0.0
+                mode = "AVOID_FORWARD"
+
+                avoid_start_distance = travelled_distance
+
+                desired_v = 0.0
+                desired_w = 0.0
+
             else:
-                desired_v, desired_w = AVOID_FORWARD_V, 0.0
+
+                desired_v = 0.0
+
+                desired_w = (
+                    AVOID_TURN_W * turn_direction
+                )
+
+        elif mode == "AVOID_FORWARD":
+
+            moved = (
+                travelled_distance
+                - avoid_start_distance
+            )
+
+            if front < STOP_DISTANCE:
+
+                mode = "AVOID_TURN"
+
+                turn_start_heading = heading
+
+                turn_direction = (
+                    1 if left >= right else -1
+                )
+
+                desired_v = 0.0
+                desired_w = 0.0
+
+            elif moved >= AVOID_DISTANCE:
+
+                mode = "FOLLOW"
+
+                desired_v = 0.0
+                desired_w = 0.0
+
+            else:
+
+                desired_v = AVOID_FORWARD_V
+                desired_w = 0.0
+
+        # ====================================================
+        # CAMERA PROCESSING
+        # ====================================================
 
         if now - last_cam_time >= CAM_INTERVAL:
+
             last_cam_time = now
+
             frame = camera.capture_cv_frame(data)
-            corners, ids, annotated = camera.detect_markers(frame)
-            detected_ids = ([] if ids is None else
-                            [int(value) for value in np.asarray(ids).reshape(-1)])
-            small_width = marker_width(corners, ids, FINE_ID)
 
-            if not fine_locked:
-                if small_width >= FINE_SWITCH_WIDTH:
-                    fine_detected_frames += 1
-                else:
-                    fine_detected_frames = 0
+            corners, ids, annotated = (
+                camera.detect_markers(frame)
+            )
 
-                if fine_detected_frames >= FINE_CONFIRM_FRAMES:
-                    fine_locked = True
-                    follower.target_id = FINE_ID
-                    # Original TagFollower's scan is already complete in normal use;
-                    # do not replace the object or restart a full scan.
-                    follower.state = 'TRACKING'
-                    follower.target_width_px = FINE_STOP_WIDTH
-                    print(f'[{now:.2f}s] TARGET SWITCH: ID {COARSE_ID} -> '
-                          f'ID {FINE_ID} (width={small_width:.1f}px)')
+            detected_ids = (
+                []
+                if ids is None
+                else [
+                    int(value)
+                    for value in np.asarray(ids).reshape(-1)
+                ]
+            )
 
-            if mode == 'FOLLOW':
-                desired_v, desired_w = follower.compute_commands(corners, ids, heading)
-                if desired_v > 0 and front < STOP_DISTANCE:
-                    mode = 'AVOID_TURN'
-                    turn_start_heading = heading
-                    turn_direction = 1 if left >= right else -1
-                    desired_v, desired_w = 0.0, 0.0
-                elif desired_v > 0 and front < CLEAR_DISTANCE:
-                    desired_v = min(desired_v, AVOID_FORWARD_V)
+            coarse_width, coarse_error = marker_measurement(
+                corners,
+                ids,
+                COARSE_ID,
+                camera.width,
+            )
 
-            cv2.putText(annotated, f'Mode: {mode} / {follower.state}', (15, 30),
-                        cv2.FONT_HERSHEY_SIMPLEX, .55, (0, 255, 0), 2)
-            cv2.putText(annotated, f'Yaw: {math.degrees(heading):.1f} deg', (15, 55),
-                        cv2.FONT_HERSHEY_SIMPLEX, .55, (0, 255, 255), 2)
-            cv2.putText(annotated, f'Front: {front:.2f} m', (15, 80),
-                        cv2.FONT_HERSHEY_SIMPLEX, .55, (0, 0, 255), 2)
-            cv2.putText(annotated, f'Target ID: {follower.target_id}', (15, 105),
-                        cv2.FONT_HERSHEY_SIMPLEX, .55, (0, 255, 0), 2)
-            cv2.putText(annotated, f'Detected: {detected_ids}', (15, 130),
-                        cv2.FONT_HERSHEY_SIMPLEX, .48, (255, 255, 0), 1)
-            cv2.putText(annotated,
-                        f'ID99 width: {small_width:.1f}px  confirm: {fine_detected_frames}/{FINE_CONFIRM_FRAMES}',
-                        (15, 155), cv2.FONT_HERSHEY_SIMPLEX, .45, (255, 255, 0), 1)
-            cv2.imshow('TurtleBot3 - Tag + LiDAR', annotated)
+            fine_width, fine_error = marker_measurement(
+                corners,
+                ids,
+                FINE_ID,
+                camera.width,
+            )
+
+            # =================================================
+            # STAGE 1: APPROACH ID 0 FIRST
+            # =================================================
+
+            if docking_phase == "COARSE":
+
+                # ID 99 is NOT allowed to become the target
+                # until ID 0 reaches the coarse threshold.
+
+                if (
+                    not coarse_ready
+                    and coarse_width >= COARSE_SWITCH_WIDTH
+                ):
+
+                    coarse_ready = True
+
+                    print(
+                        f"[{now:.2f}s] "
+                        f"ID 0 approach complete. "
+                        f"Width={coarse_width:.1f}px. "
+                        "ID 99 handoff enabled."
+                    )
+
+                # Only check ID 99 after coarse approach.
+                if coarse_ready and not fine_locked:
+
+                    if fine_width >= FINE_SWITCH_WIDTH:
+                        fine_detected_frames += 1
+                    else:
+                        fine_detected_frames = 0
+
+                    if (
+                        fine_detected_frames
+                        >= FINE_CONFIRM_FRAMES
+                    ):
+
+                        fine_locked = True
+                        docking_phase = "FINE"
+
+                        follower.target_id = FINE_ID
+                        follower.state = "TRACKING"
+                        follower.target_width_px = FINE_STOP_WIDTH
+
+                        mode = "FOLLOW"
+
+                        desired_v = 0.0
+                        desired_w = 0.0
+
+                        print(
+                            f"[{now:.2f}s] "
+                            "TARGET SWITCH: "
+                            "ID 0 -> ID 99"
+                        )
+
+            # =================================================
+            # FILTER: ONLY ACTIVE TARGET REACHES FOLLOWER
+            # =================================================
+
+            active_id = (
+                FINE_ID
+                if fine_locked
+                else COARSE_ID
+            )
+
+            tracking_corners, tracking_ids = filter_target(
+                corners,
+                ids,
+                active_id,
+            )
+
+            # =================================================
+            # STAGE 2: FOLLOW ACTIVE TARGET
+            # =================================================
+
+            if mode == "FOLLOW":
+
+                desired_v, desired_w = (
+                    follower.compute_commands(
+                        tracking_corners,
+                        tracking_ids,
+                        heading,
+                    )
+                )
+
+                if docking_phase == "COARSE":
+
+                    if (
+                        desired_v > 0
+                        and front < STOP_DISTANCE
+                    ):
+
+                        mode = "AVOID_TURN"
+
+                        turn_start_heading = heading
+
+                        turn_direction = (
+                            1 if left >= right else -1
+                        )
+
+                        desired_v = 0.0
+                        desired_w = 0.0
+
+                    elif (
+                        desired_v > 0
+                        and front < CLEAR_DISTANCE
+                    ):
+
+                        desired_v = min(
+                            desired_v,
+                            AVOID_FORWARD_V,
+                        )
+
+                elif docking_phase == "FINE":
+
+                    # Limit speed for fine docking.
+                    desired_v = float(
+                        np.clip(
+                            desired_v,
+                            0.0,
+                            FINE_MAX_V,
+                        )
+                    )
+
+                    desired_w = float(
+                        np.clip(
+                            desired_w,
+                            -FINE_MAX_W,
+                            FINE_MAX_W,
+                        )
+                    )
+
+                    # =========================================
+                    # CHARGING CONDITIONS
+                    # =========================================
+
+                    close_enough = (
+                        fine_width >= FINE_STOP_WIDTH
+                    )
+
+                    aligned = (
+                        fine_error is not None
+                        and abs(fine_error)
+                        <= FINE_ALIGNMENT_TOL
+                    )
+
+                    if close_enough and aligned:
+
+                        charge_detected_frames += 1
+
+                    else:
+
+                        charge_detected_frames = 0
+
+                    if (
+                        charge_detected_frames
+                        >= CHARGE_CONFIRM_FRAMES
+                    ):
+
+                        robot_charged = True
+                        docking_phase = "ROBOT CHARGED"
+                        mode = "CHARGED"
+
+                        desired_v = 0.0
+                        desired_w = 0.0
+
+                        print()
+                        print("=" * 50)
+                        print("                ROBOT CHARGED")
+                        print("       Charging station reached")
+                        print("       All robot movement stopped")
+                        print("=" * 50)
+                        print()
+
+                    elif front < DOCK_SAFETY_DISTANCE:
+
+                        desired_v = 0.0
+                        desired_w = 0.0
+
+            # =================================================
+            # CAMERA DISPLAY
+            # =================================================
+
+            cv2.putText(
+                annotated,
+                f"Mode: {mode}",
+                (15, 30),
+                cv2.FONT_HERSHEY_SIMPLEX,
+                0.55,
+                (0, 255, 0),
+                2,
+            )
+
+            cv2.putText(
+                annotated,
+                f"Phase: {docking_phase}",
+                (15, 55),
+                cv2.FONT_HERSHEY_SIMPLEX,
+                0.55,
+                (0, 255, 255),
+                2,
+            )
+
+            cv2.putText(
+                annotated,
+                f"Target ID: {active_id}",
+                (15, 80),
+                cv2.FONT_HERSHEY_SIMPLEX,
+                0.55,
+                (0, 255, 0),
+                2,
+            )
+
+            cv2.putText(
+                annotated,
+                f"Detected: {detected_ids}",
+                (15, 105),
+                cv2.FONT_HERSHEY_SIMPLEX,
+                0.48,
+                (255, 255, 0),
+                1,
+            )
+
+            cv2.putText(
+                annotated,
+                f"ID0: {coarse_width:.1f}px "
+                f"ID99: {fine_width:.1f}px",
+                (15, 130),
+                cv2.FONT_HERSHEY_SIMPLEX,
+                0.45,
+                (255, 255, 0),
+                1,
+            )
+
+            cv2.putText(
+                annotated,
+                f"ID99 enabled: {coarse_ready}",
+                (15, 155),
+                cv2.FONT_HERSHEY_SIMPLEX,
+                0.48,
+                (255, 255, 0),
+                1,
+            )
+
+            cv2.putText(
+                annotated,
+                f"Front: {front:.2f}m",
+                (15, 180),
+                cv2.FONT_HERSHEY_SIMPLEX,
+                0.48,
+                (0, 0, 255),
+                1,
+            )
+
+            cv2.putText(
+                annotated,
+                f"Yaw: {math.degrees(heading):.1f} deg",
+                (15, 205),
+                cv2.FONT_HERSHEY_SIMPLEX,
+                0.48,
+                (0, 255, 255),
+                1,
+            )
+
+            last_annotated = annotated.copy()
+
+            if robot_charged:
+                draw_charged_banner(annotated)
+
+            cv2.imshow(
+                "TurtleBot3 - Two Stage Docking",
+                annotated,
+            )
+
             cv2.waitKey(1)
 
-            if now - last_debug_time >= DEBUG_PRINT_INTERVAL:
-                print(f'[{now:.2f}s] IDs={detected_ids} ID99_width={small_width:.1f}px '
-                      f'target={follower.target_id} mode={mode} state={follower.state}')
+            if (
+                now - last_debug_time
+                >= DEBUG_PRINT_INTERVAL
+            ):
+
+                print(
+                    f"[{now:.2f}s] "
+                    f"Detected={detected_ids} "
+                    f"Target={active_id} "
+                    f"Phase={docking_phase} "
+                    f"Mode={mode} "
+                    f"ID0={coarse_width:.1f}px "
+                    f"ID99={fine_width:.1f}px "
+                    f"CoarseReady={coarse_ready} "
+                    f"ChargeConfirm={charge_detected_frames}/"
+                    f"{CHARGE_CONFIRM_FRAMES}"
+                )
+
                 last_debug_time = now
 
-        if mode != last_message_mode:
-            print(f'[{now:.2f}s] {mode} | front={front:.2f}m')
-            last_message_mode = mode
+        # ====================================================
+        # APPLY WHEEL COMMANDS
+        # ====================================================
 
-        left_wheel, right_wheel = diff_drive.twist_to_wheel_velocities(desired_v, desired_w)
-        data.ctrl[left_actuator] = float(np.clip(left_wheel, -MAX_WHEEL_SPEED, MAX_WHEEL_SPEED))
-        data.ctrl[right_actuator] = float(np.clip(right_wheel, -MAX_WHEEL_SPEED, MAX_WHEEL_SPEED))
+        if robot_charged:
+            desired_v = 0.0
+            desired_w = 0.0
+
+        left_wheel, right_wheel = (
+            diff_drive.twist_to_wheel_velocities(
+                desired_v,
+                desired_w,
+            )
+        )
+
+        data.ctrl[left_actuator] = float(
+            np.clip(
+                left_wheel,
+                -MAX_WHEEL_SPEED,
+                MAX_WHEEL_SPEED,
+            )
+        )
+
+        data.ctrl[right_actuator] = float(
+            np.clip(
+                right_wheel,
+                -MAX_WHEEL_SPEED,
+                MAX_WHEEL_SPEED,
+            )
+        )
+
+    # ========================================================
+    # LAUNCH
+    # ========================================================
 
     try:
+
         mujoco.set_mjcb_control(control_loop)
         mujoco.viewer.launch(model, data)
+
     except KeyboardInterrupt:
-        print('Simulation interrupted.')
+
+        print("Simulation interrupted.")
+
     finally:
+
         mujoco.set_mjcb_control(None)
         cv2.destroyAllWindows()
 
 
-if __name__ == '__main__':
+if __name__ == "__main__":
     main()
