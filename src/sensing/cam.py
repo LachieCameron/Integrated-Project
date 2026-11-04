@@ -37,13 +37,13 @@ class RaspiCamera:
         # Handles both older and modern OpenCV environments seamlessly
         if hasattr(cv2.aruco, 'ArucoDetector'):
             # OpenCV 4.7.0+ API
-            self.dictionary = cv2.aruco.getPredefinedDictionary(cv2.aruco.DICT_5X5_50)
+            self.dictionary = cv2.aruco.getPredefinedDictionary(cv2.aruco.DICT_5X5_100)
             self.parameters = cv2.aruco.DetectorParameters()
             self.detector = cv2.aruco.ArucoDetector(self.dictionary, self.parameters)
             self.legacy_mode = False
         else:
             # Legacy OpenCV (< 4.7.0) API
-            self.dictionary = cv2.aruco.Dictionary_get(cv2.aruco.DICT_5X5_50)
+            self.dictionary = cv2.aruco.Dictionary_get(cv2.aruco.DICT_5X5_100)
             self.parameters = cv2.aruco.DetectorParameters_create()
             self.legacy_mode = True
 
