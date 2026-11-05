@@ -39,7 +39,9 @@ INITIAL_POSE_ESTIMATE = np.array([0.0, 0.0, 0.0], dtype=float)
 INITIAL_COVARIANCE = np.diag([0.15**2, 0.15**2, math.radians(15)**2])
 STATUS_INTERVAL = 1.0
 DOCK_TAG_ID = 99
-COARSE_SWITCH_WIDTH_PX = 145.0
+ID99_SWITCH_MIN_WIDTH_PX = 0.0  # minimum reliable visible size; tune from camera logs
+ID99_CONFIRM_FRAMES = 3
+COARSE_STOP_WIDTH_PX = 250.0
 # Keep the ORIGINAL TagFollower stop threshold (250 px), not 125 px.
 DOCK_WIDTH_PX = 250.0
 # Require the lower marker to be reasonably centred before latching CHARGED.
@@ -96,6 +98,8 @@ def main():
     dock_confirm_count = 0
     last_dock_debug = -1.0
     final_approach = False
+    id99_seen_frames = 0
+    last_switch_debug = -1.0
 
     def lidar_distances():
         values = []
@@ -111,6 +115,7 @@ def main():
         nonlocal last_cam_time, last_status_time, desired_v, desired_w
         nonlocal mode, turn_start_heading, turn_direction, forward_start
         nonlocal last_message_mode, charged, docking_phase, dock_confirm_count, last_dock_debug, final_approach
+        nonlocal id99_seen_frames, last_switch_debug
 
         # EKF prediction from measured wheel motion. No data.xpos or data.qpos.
         d_left, d_right, _, _ = encoder.step(data)
@@ -171,20 +176,57 @@ def main():
                     centre_error = abs(centre - camera.width / 2.0) / (camera.width / 2.0)
                     visible[int(tag_id)] = (width, centre_error)
 
-            # Switch ONLY once the lower marker is actually visible AND
-            # the coarse marker indicates that we have approached the station.
-            # Do not switch just because a distant ID 99 looks 87.5 px wide.
-            coarse_close = 0 in visible and visible[0][0] >= COARSE_SWITCH_WIDTH_PX
-            if not docking_phase and coarse_close and DOCK_TAG_ID in visible:
-                docking_phase = True
-                follower.target_ids = (DOCK_TAG_ID,)
-                follower.target_id = DOCK_TAG_ID
-                follower.target_width_pixels = DOCK_WIDTH_PX
-                print(f'[{data.time:.2f}s] SWITCH: ID 0 -> ID 99 (final docking)')
+            # Do not require ID 0 and ID 99 in the same frame: the small
+            # lower marker often becomes visible only after ID 0 leaves view.
+            # Only switch after the initial scan has finished and ID 99 has
+            # been detected in several consecutive frames.
+            # id99_visible = (DOCK_TAG_ID in visible and
+            #                 visible[DOCK_TAG_ID][0] >= ID99_SWITCH_MIN_WIDTH_PX)
+            # if not docking_phase and follower.state == 'TRACKING':
+            #     id99_seen_frames = id99_seen_frames + 1 if id99_visible else 0
+            #     if id99_seen_frames >= ID99_CONFIRM_FRAMES:
+            #         docking_phase = True
+            #         follower.target_ids = (DOCK_TAG_ID,)
+            #         follower.target_id = DOCK_TAG_ID
+            #         follower.target_width_pixels = DOCK_WIDTH_PX
+            #         print(f'[{data.time:.2f}s] SWITCH: ID 0 -> ID 99 '
+            #               f'(width={visible[DOCK_TAG_ID][0]:.1f}px)')
+            # Confirm ID 99 across consecutive camera frames
+            id99_visible = DOCK_TAG_ID in visible
+
+            if not docking_phase and follower.state == 'TRACKING':
+                if id99_visible:
+                    id99_seen_frames += 1
+                else:
+                    id99_seen_frames = 0
+
+                if id99_seen_frames >= ID99_CONFIRM_FRAMES:
+                    docking_phase = True
+
+                    follower.target_ids = (99,)
+                    follower.target_id = 99
+                    follower.target_width_pixels = DOCK_WIDTH_PX
+
+                    print(f'[{data.time:.2f}s] SWITCH: ID 0 -> ID 99')
+
+            if not docking_phase and data.time - last_switch_debug >= 2.0:
+                print(f'[{data.time:.2f}s] SEARCH ID99: '
+                      f'visible={DOCK_TAG_ID in visible}, '
+                      f'width={visible.get(DOCK_TAG_ID, (0.0,))[0]:.1f}px, '
+                      f'confirmed={id99_seen_frames}/{ID99_CONFIRM_FRAMES}')
+                last_switch_debug = float(data.time)
 
             if mode == 'FOLLOW':
                 # Preserve the original proportional TagFollower steering law.
                 desired_v, desired_w = follower.compute_commands(corners, ids, heading)
+
+                # If ID 0 has reached its stopping width before ID 99 is
+                # confirmed, rotate slowly to search for the lower marker
+                # instead of freezing permanently at ID 0.
+                if (not docking_phase and follower.state == 'TRACKING'
+                        and 0 in visible and
+                        visible[0][0] >= COARSE_STOP_WIDTH_PX):
+                    desired_v, desired_w = 0.0, 0.12
 
                 # Do not declare charging based on ID 0 or on a separate
                 # smaller distance threshold. Confirm the selected ID 99 has
@@ -225,8 +267,10 @@ def main():
                 # close-range approach. During the last part of docking,
                 # prevent the dock itself triggering an avoidance turn.
                 final_approach = (docking_phase and DOCK_TAG_ID in visible
-                                  and visible[DOCK_TAG_ID][0] >= COARSE_SWITCH_WIDTH_PX)
-                if not charged and not final_approach and desired_v > 0 and front < CLEAR_DISTANCE:
+                                  and visible[DOCK_TAG_ID][0] >= 145.0)
+                if not charged and desired_v > 0 and (
+                        (not final_approach and front < CLEAR_DISTANCE) or
+                        (final_approach and front < STOP_DISTANCE)) :
                     mode = 'AVOID_TURN'
                     turn_start_heading = heading
                     turn_direction = 1 if left >= right else -1
