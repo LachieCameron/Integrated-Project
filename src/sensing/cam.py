@@ -24,6 +24,11 @@ class RaspiCamera:
         self.height = int(model.cam_resolution[self.cam_id][1])
         
         self.renderer = mujoco.Renderer(model, self.height, self.width)
+        # Keep rangefinder measurements active, but do not draw their debug rays
+        # into the image used by the ArUco detector.
+        self.render_options = mujoco.MjvOption()
+        self.render_options.flags[mujoco.mjtVisFlag.mjVIS_RANGEFINDER] = 0
+
         self.camera_matrix = None
         self.distortion = None
         if calibration_path is not None:
@@ -53,7 +58,11 @@ class RaspiCamera:
 
     def capture_cv_frame(self, data, undistort=None):
         """Render a BGR frame, optionally applying the saved calibration."""
-        self.renderer.update_scene(data, camera=self.cam_id)
+        self.renderer.update_scene(
+            data,
+            camera=self.cam_id,
+            scene_option=self.render_options,
+        )
         rgb_image = self.renderer.render()
         
         # Map MuJoCo RGB output to OpenCV BGR.
