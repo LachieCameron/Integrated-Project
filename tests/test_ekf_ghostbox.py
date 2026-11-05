@@ -27,6 +27,8 @@ from src.sensing.IMU import IMUSensor
 from src.sensing.cam import RaspiCamera
 from src.sensing.wheel_encoder import WheelEncoder
 
+BASE_VISUAL_CENTER_OFFSET = np.array([-0.064, 0.0], dtype=float)
+
 
 def load_track_helpers():
     path = os.path.join(PROJECT_ROOT, "scripts", "run_track_a.py")
@@ -44,11 +46,17 @@ def add_pose_box(scene, pose, color):
     yaw = float(pose[2])
     c, s = math.cos(yaw), math.sin(yaw)
     rotation = np.array([c, -s, 0.0, s, c, 0.0, 0.0, 0.0, 1.0], dtype=np.float32)
+    offset = np.array(
+        [
+            c * BASE_VISUAL_CENTER_OFFSET[0] - s * BASE_VISUAL_CENTER_OFFSET[1],
+            s * BASE_VISUAL_CENTER_OFFSET[0] + c * BASE_VISUAL_CENTER_OFFSET[1],
+        ]
+    )
     mujoco.mjv_initGeom(
         scene.geoms[index],
         type=mujoco.mjtGeom.mjGEOM_BOX,
         size=[0.14, 0.14, 0.05],
-        pos=[float(pose[0]), float(pose[1]), 0.05],
+        pos=[float(pose[0] + offset[0]), float(pose[1] + offset[1]), 0.05],
         mat=rotation,
         rgba=color,
     )
@@ -119,8 +127,8 @@ def main():
             fused_error[2] = wrap_angle(fused_error[2])
 
             viewer.user_scn.ngeom = 0
-            add_pose_box(viewer.user_scn, odom_pose, [0.0, 1.0, 0.0, 0.35])
-            add_pose_box(viewer.user_scn, fused_pose, [0.1, 0.4, 1.0, 0.45])
+            add_pose_box(viewer.user_scn, odom_pose, [0.0, 1.0, 0.0, 0.35])  #Green
+            add_pose_box(viewer.user_scn, fused_pose, [0.1, 0.4, 1.0, 0.45]) #Blue
             if data.time - last_print >= 0.5:
                 last_print = data.time
                 print(
