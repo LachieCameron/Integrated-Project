@@ -46,6 +46,10 @@
 
 <!-- Wall Tags -->
 
+<!-- 289 // +N+ -->
+<!-- 406 // W+E -->
+<!-- 123 // +S+ -->
+
       <!-- North 88 -->
      <texture name="aruco_texture_88" type="2d" file="textures/aruco_88.png"/>
      <material name="aruco_material_88" texture="aruco_texture_88" specular="0.1" shininess="0.1"/>
@@ -149,6 +153,8 @@
 <!-- Aruco tags -->
 
 <!-- Wall Tags -->
+
+
 <!-- North -->
     <geom name="aruco_marker_88"
           type="box"
@@ -167,6 +173,7 @@
           type="box"
           pos="0 -2.9 0.5"
           size="0.2 0.001 0.2"
+          euler="0 0 3.14159"
           material="aruco_material_22"/>
 
 <!-- West -->
@@ -188,7 +195,8 @@
           material="aruco_material_00"/>
 
 
-    <!-- 50x50mm Fine Dock Tag -->
+
+    <!-- 50x50mm//25x25mm Fine Dock Tag -->
     <geom name="aruco_marker_99"
           type="box"
           pos="2.4 2.5 0.1"
