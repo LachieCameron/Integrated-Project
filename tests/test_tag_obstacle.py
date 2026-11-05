@@ -21,7 +21,7 @@ STOP_DISTANCE = 0.2
 CLEAR_DISTANCE = 0.4
 AVOID_DISTANCE = 0.5
 AVOID_TURN_RAD = math.radians(35)  # Shorter turn than previous 90 degrees
-AVOID_FORWARD_V = 1.0  # m/s
+AVOID_FORWARD_V = 0.15  # m/s; keep consistent with the tag-following speed limit
 AVOID_TURN_W = 0.45      # rad/s
 MAX_WHEEL_SPEED = 5.0  # rad/s; verify against XML actuator limits
 ANGLES = list(range(-90, 91, 15))
@@ -97,7 +97,10 @@ def main():
         right = sector_min(distances, -90, -45)
         position = np.asarray(data.xpos[base_id, :2]).copy()
 
-        if mode == 'FOLLOW' and desired_v > 0 and front < STOP_DISTANCE:
+        # Begin the avoidance manoeuvre before the emergency stop distance.
+        # The previous trigger used STOP_DISTANCE, so CLEAR_DISTANCE only
+        # capped speed to the tag follower's existing 0.15 m/s maximum.
+        if mode == 'FOLLOW' and desired_v > 0 and front < CLEAR_DISTANCE:
             mode = 'AVOID_TURN'
             turn_start_heading = heading
             turn_direction = 1 if left >= right else -1
@@ -134,13 +137,11 @@ def main():
             if mode == 'FOLLOW':
                 desired_v, desired_w = follower.compute_commands(corners, ids, heading)
                 # Immediate LiDAR override, including after new camera commands.
-                if desired_v > 0 and front < STOP_DISTANCE:
+                if desired_v > 0 and front < CLEAR_DISTANCE:
                     mode = 'AVOID_TURN'
                     turn_start_heading = heading
                     turn_direction = 1 if left >= right else -1
                     desired_v, desired_w = 0.0, 0.0
-                elif desired_v > 0 and front < CLEAR_DISTANCE:
-                    desired_v = min(desired_v, AVOID_FORWARD_V)
 
             cv2.putText(annotated, f'Mode: {mode} / {follower.state}', (15, 30),
                         cv2.FONT_HERSHEY_SIMPLEX, 0.55, (0, 255, 0), 2)

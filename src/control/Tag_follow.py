@@ -1,6 +1,7 @@
 # src/control/Tag_follow.py
 import numpy as np
 
+
 class DiffDriveController:
     def __init__(self, wheel_base=0.287, wheel_radius=0.033):
         self.L = wheel_base
@@ -119,12 +120,44 @@ class PoseTracker:
         )
 
 class TagFollower:
-    def __init__(self, target_id=0, image_width=640, Kp_linear=0.6, Kp_angular=1.8, scan_speed=0.4):
-        self.target_id = target_id
+    def __init__(
+        self,
+        target_id=0,
+        image_width=640,
+        Kp_linear=0.6,
+        Kp_angular=1.8,
+        scan_speed=0.4,
+        target_ids=None,
+        target_width_pixels=250.0,
+        max_linear_v=0.15,
+        max_angular_w=0.8,
+    ):
+        if target_ids is None:
+            target_ids = (target_id,)
+        else:
+            target_ids = tuple(target_ids)
+        if not target_ids or any(
+            isinstance(tag_id, (bool, np.bool_))
+            or not isinstance(tag_id, (int, np.integer))
+            for tag_id in target_ids
+        ):
+            raise ValueError("target_ids must be a non-empty sequence of integers")
+        if target_width_pixels <= 0:
+            raise ValueError("target_width_pixels must be positive")
+        if max_linear_v <= 0 or max_angular_w <= 0:
+            raise ValueError("velocity limits must be positive")
+
+        # IDs are ordered by preference when more than one configured tag is visible.
+        self.target_ids = tuple(int(tag_id) for tag_id in target_ids)
+        self.target_id = self.target_ids[0]
         self.center_x = image_width / 2.0
         self.Kp_linear = Kp_linear
         self.Kp_angular = Kp_angular
         self.scan_speed = scan_speed
+        self.target_width_pixels = float(target_width_pixels)
+        self.max_linear_v = float(max_linear_v)
+        self.max_angular_w = float(max_angular_w)
+        self.active_target_id = None
         
         # State Machine Flags
         self.state = "INITIAL_360_SCAN"  # States: INITIAL_360_SCAN, TRACKING, LOST_STOPPED
@@ -135,6 +168,18 @@ class TagFollower:
         
         # New Flag: Remember if we spotted the target at any point during our 360-degree rotation
         self.spotted_target_during_scan = False
+
+    def _target_index(self, ids):
+        """Return the preferred visible target ID and its corner index."""
+        if ids is None:
+            return None
+
+        detected_ids = np.asarray(ids).reshape(-1)
+        for target_id in self.target_ids:
+            matches = np.flatnonzero(detected_ids == target_id)
+            if matches.size:
+                return target_id, int(matches[0])
+        return None
 
     def compute_commands(self, corners, ids, current_heading):
         """
@@ -147,7 +192,8 @@ class TagFollower:
             return 0.0, self.scan_speed
 
         # Core Check: If we see our target tag during the initial scan phase, log it!
-        if ids is not None and self.target_id in ids:
+        target = self._target_index(ids)
+        if target is not None:
             self.spotted_target_during_scan = True
 
         # --- STATE 1: FORCED INITIAL 360 SCAN ---
@@ -164,7 +210,7 @@ class TagFollower:
                 self.has_completed_360 = True
                 
                 # Check memory flags to select the next state routing
-                if self.spotted_target_during_scan or (ids is not None and self.target_id in ids):
+                if self.spotted_target_during_scan:
                     self.state = "TRACKING"
                 else:
                     self.state = "LOST_STOPPED"
@@ -173,12 +219,12 @@ class TagFollower:
 
         # --- STATE 2: ACTIVE TARGET TRACKING ---
         elif self.state == "TRACKING":
-            if ids is None or self.target_id not in ids:
+            if target is None:
                 # If we lose the tag while steering, spin slowly in place to re-acquire it
+                self.active_target_id = None
                 return 0.0, self.scan_speed * 0.5
 
-            # Find the tag's index array location and flatten it safely
-            idx = np.where(ids.flatten() == self.target_id)[0][0]
+            self.active_target_id, idx = target
             # Reshape from OpenCV's native (1, 4, 2) layout down to a clean (4, 2) array layout
             marker_corners = corners[idx].reshape(4, 2)  # Corners order: TL, TR, BR, BL
 
@@ -188,8 +234,7 @@ class TagFollower:
 
             # Proximity metric calculations: Compute Euclidean distance between top-left [0] and top-right [1] vertices
             marker_width_px = np.linalg.norm(marker_corners[0] - marker_corners[1])
-            target_width_px = 250.0
-            error_linear = (target_width_px - marker_width_px) / target_width_px
+            error_linear = (self.target_width_pixels - marker_width_px) / self.target_width_pixels
 
             # Control Law calculations
             angular_w = -self.Kp_angular * error_angular
@@ -200,7 +245,10 @@ class TagFollower:
                 linear_v = 0.0
                 angular_w = 0.0  # Lock steering completely on arrival
 
-            return linear_v, angular_w
+            return (
+                float(np.clip(linear_v, 0.0, self.max_linear_v)),
+                float(np.clip(angular_w, -self.max_angular_w, self.max_angular_w)),
+            )
 
         # --- STATE 3: SAFETY HALT ---
         else:
