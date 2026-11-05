@@ -1,10 +1,4 @@
 #!/usr/bin/env python3
-"""TurtleBot3: original ArUco + LiDAR behaviour with wheel-odometry EKF.
-
-All controller pose feedback comes from the EKF, never MuJoCo ground truth.
-This version is encoder-prediction-only: camera detections control TagFollower,
-but are not yet absolute-pose EKF corrections.
-"""
 import os
 import sys
 import math
