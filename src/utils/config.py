@@ -53,6 +53,7 @@ class ObstacleConfig:
 class CameraConfig:
     calibration_file: str | None
     marker_size_m: float
+    wall_marker_size_m: float
     aruco_dictionary: str
     detection_rate_hz: float
 
@@ -177,6 +178,9 @@ def load_config(path: str | Path) -> AppConfig:
         camera=CameraConfig(
             calibration_file=calibration_file,
             marker_size_m=_positive(camera.get("marker_size_m"), "marker_size_m"),
+            wall_marker_size_m=_positive(
+                camera.get("wall_marker_size_m"), "wall_marker_size_m"
+            ),
             aruco_dictionary=camera.get("aruco_dictionary"),
             detection_rate_hz=_positive(camera.get("detection_rate_hz"), "detection_rate_hz"),
         ),

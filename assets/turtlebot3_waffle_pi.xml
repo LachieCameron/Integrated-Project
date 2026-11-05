@@ -70,6 +70,8 @@
         <geom quat="0.707388 0.706825 0 0" mesh="right_tire" material="grey" class="visual"/>
         <geom quat="0.707388 0.706825 0 0" mesh="right_tire" class="collision" friction="3 0.005 0.0001"/>
       </body>
+
+      
       <!-- Lidar Sites -->
       <site name="lidar_-90" pos="-0.049 0 0.1255" quat="0.50000000 0.50000000 0.50000000 -0.50000000" size="0.005" rgba="0 1 0 0.4" />
       <site name="lidar_-75" pos="-0.049 0 0.1255" quat="0.56098553 0.43045933 0.56098553 -0.43045933" size="0.005" rgba="0 1 0 0.4" />

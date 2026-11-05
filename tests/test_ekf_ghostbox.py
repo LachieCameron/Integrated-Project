@@ -1,100 +1,127 @@
-import sys
-import os
+#!/usr/bin/env python3
+"""Compare wheel-only and wall-ArUco-fused EKF estimates in the viewer.
 
-project_root = os.path.abspath(os.path.join(os.path.dirname(__file__), ".."))
-if project_root not in sys.path:
-    sys.path.insert(0, project_root)
+The green ghost is wheel odometry only. The blue ghost is corrected by wall
+markers. A configured wheel scale error makes drift easier to observe.
+"""
 
+from __future__ import annotations
 
-# 1. Dynamically get the absolute path to your project root folder
-current_dir = os.path.dirname(os.path.abspath(__file__))  
-project_root = os.path.abspath(os.path.join(current_dir, "..")) 
-
+import argparse
+import importlib.util
 import math
-import numpy as np
-import xml.etree.ElementTree as ET
-import mujoco
-import mujoco.viewer
+import os
+import sys
 import time
 
-from src.sensing.IMU import IMUSensor
+import mujoco
+import mujoco.viewer
+import numpy as np
+
+PROJECT_ROOT = os.path.abspath(os.path.join(os.path.dirname(__file__), ".."))
+if PROJECT_ROOT not in sys.path:
+    sys.path.insert(0, PROJECT_ROOT)
+
+from src.estimation.ekf import RobotEKF, wrap_angle
+from src.sensing.cam import RaspiCamera
 from src.sensing.wheel_encoder import WheelEncoder
-from src.estimation.ekf import RobotEKF
-
-path = os.path.join(project_root, "assets", "scene_turtlebot3_waffle_pi.xml")
-model = mujoco.MjModel.from_xml_path(path)
-data = mujoco.MjData(model)
-data_ghost = mujoco.MjData(model)  # Ghost data for visualization
-
-vopt_ghost = mujoco.MjvOption()
-vopt_ghost.flags[mujoco.mjtVisFlag.mjVIS_TRANSPARENT] = True
-
-pert_empty = mujoco.MjvPerturb()
-catmask_dynamic = mujoco.mjtCatBit.mjCAT_DYNAMIC
-
-imu = IMUSensor(model)
-encoder = WheelEncoder(model)
-ekf = RobotEKF(model=model)
-
-dt = model.opt.timestep
-
-with mujoco.viewer.launch_passive(model, data) as viewer:
-    print("Simulation execution loop spinning...")
-    while viewer.is_running():
-        start_time = time.time()
-
-        # 1. Controller: command wheel velocities directly (rad/s)
-        data.ctrl[0] = -3.0  # Left motor
-        data.ctrl[1] = 3.0  # Right motor
-
-        # 2. Physics Step
-        mujoco.mj_step(model, data)
-
-        # 3. Read Hardware Abstraction Layer (Sensing)
-        d_left, d_right, v_left, v_right = encoder.step(data)
-        accel, gyro = imu.read(data)
-
-        # 4. State Estimation
-        current_pose = ekf.update(d_left, d_right, dt)
-        est_x, est_y, est_theta = current_pose[0], current_pose[1], current_pose[2]
 
 
-        user_scn = viewer.user_scn
-        if user_scn is not None:
-            # Clear previous frame's ghost data so markers don't stack infinitely
-            user_scn.ngeom = 0  
-            
-            # Grab an empty geometry slot out of the context buffer
-            geom_idx = user_scn.ngeom
-            user_scn.ngeom += 1
-            
-            # Convert EKF heading (theta around Z) into a 3x3 rotation matrix for MuJoCo
-            cos_t = np.cos(est_theta)
-            sin_t = np.sin(est_theta)
-            # Z-axis rotation matrix flattened in row-major layout
-            r_mat = np.array([
-                cos_t, -sin_t, 0.0,
-                sin_t,  cos_t, 0.0,
-                0.0,    0.0,   1.0
-            ], dtype=np.float32)
+def load_track_helpers():
+    path = os.path.join(PROJECT_ROOT, "scripts", "run_track_a.py")
+    spec = importlib.util.spec_from_file_location("run_track_a", path)
+    if spec is None or spec.loader is None:
+        raise RuntimeError("could not load Track A helpers")
+    module = importlib.util.module_from_spec(spec)
+    spec.loader.exec_module(module)
+    return module
 
-            # Initialize a box geometry representing the Waffle Pi footprint
-            mujoco.mjv_initGeom(
-                user_scn.geoms[geom_idx],
-                type=mujoco.mjtGeom.mjGEOM_BOX,
-                size=[0.14, 0.14, 0.05],                       # Match base dimensions [x, y, z]
-                pos=[est_x, est_y, 0.05],                      # EKF positions (raised slightly off floor)
-                mat=r_mat,                                     # Calculated rotation matrix orientation
-                rgba=[0.0, 1.0, 0.0, 0.1]                      # Semi-transparent green (R, G, B, Alpha)
+
+def add_pose_box(scene, pose, color):
+    index = scene.ngeom
+    scene.ngeom += 1
+    yaw = float(pose[2])
+    c, s = math.cos(yaw), math.sin(yaw)
+    rotation = np.array([c, -s, 0.0, s, c, 0.0, 0.0, 0.0, 1.0], dtype=np.float32)
+    mujoco.mjv_initGeom(
+        scene.geoms[index],
+        type=mujoco.mjtGeom.mjGEOM_BOX,
+        size=[0.14, 0.14, 0.05],
+        pos=[float(pose[0]), float(pose[1]), 0.05],
+        mat=rotation,
+        rgba=color,
+    )
+
+
+def main():
+    parser = argparse.ArgumentParser()
+    parser.add_argument("--scale-error", type=float, default=0.02)
+    parser.add_argument("--seconds", type=float, default=30.0)
+    args = parser.parse_args()
+    helpers = load_track_helpers()
+
+    model = mujoco.MjModel.from_xml_path(helpers.SCENE)
+    data = mujoco.MjData(model)
+    camera = RaspiCamera(model)
+    encoder = WheelEncoder(model)
+    odom = RobotEKF(model=model)
+    fused = RobotEKF(model=model)
+    rng = np.random.default_rng(7)
+    scales = 1.0 + rng.normal(0.0, args.scale_error, 2)
+    dt = model.opt.timestep
+    camera_period = max(1, round(1.0 / (30.0 * dt)))
+    last_print = -1.0
+    accepted = 0
+
+    with mujoco.viewer.launch_passive(model, data) as viewer:
+        while viewer.is_running() and data.time < args.seconds:
+            start = time.time()
+            data.ctrl[:] = [-2.0, 3.0]
+            mujoco.mj_step(model, data)
+            d_left, d_right, _, _ = encoder.step(data)
+            d_left *= scales[0]
+            d_right *= scales[1]
+            odom_pose = odom.update(d_left, d_right, dt)
+            fused_pose = fused.update(d_left, d_right, dt)
+
+            if int(round(data.time / dt)) % camera_period == 0:
+                frame = camera.capture_cv_frame(data)
+                corners, ids, _ = camera.detect_markers(frame)
+                if ids is not None:
+                    for marker_corners, marker_id in zip(corners, ids.reshape(-1)):
+                        measurement = helpers.robot_pose_from_wall_marker(
+                            camera, int(marker_id), marker_corners, 0.4
+                        )
+                        if measurement is not None:
+                            fused_pose = fused.correct_pose(
+                                measurement, np.diag([0.02, 0.02, 0.05])
+                            )
+                            accepted += 1
+                            break
+
+            true_pose = np.array(
+                [data.qpos[0], data.qpos[1], 2.0 * math.atan2(data.qpos[6], data.qpos[3])]
             )
+            true_pose[2] = wrap_angle(true_pose[2])
+            odom_error = odom_pose - true_pose
+            fused_error = fused_pose - true_pose
+            odom_error[2] = wrap_angle(odom_error[2])
+            fused_error[2] = wrap_angle(fused_error[2])
 
-        # Print state telemetry cleanly
-        if data.time % 0.1 < dt:
-            print(f"Time: {data.time:.2f}s | Estimated Pose: X={current_pose[0]:.3f}, Y={current_pose[1]:.3f}, Heading={math.degrees(current_pose[2]):.1f}°")
+            viewer.user_scn.ngeom = 0
+            add_pose_box(viewer.user_scn, odom_pose, [0.0, 1.0, 0.0, 0.35])
+            add_pose_box(viewer.user_scn, fused_pose, [0.1, 0.4, 1.0, 0.45])
+            if data.time - last_print >= 0.5:
+                last_print = data.time
+                print(
+                    f"t={data.time:5.1f}s corrections={accepted:3d} "
+                    f"odom_err={np.linalg.norm(odom_error[:2]):.3f}m "
+                    f"fused_err={np.linalg.norm(fused_error[:2]):.3f}m "
+                    f"fused_yaw_err={math.degrees(abs(fused_error[2])):.1f}deg"
+                )
+            viewer.sync()
+            time.sleep(max(0.0, dt - (time.time() - start)))
 
-        viewer.sync()
 
-        # Enforce deterministic timing match
-        elapsed = time.time() - start_time
-        if elapsed < dt:
-            time.sleep(dt - elapsed)
+if __name__ == "__main__":
+    main()

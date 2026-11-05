@@ -30,7 +30,7 @@
               texrepeat="5 5"
               reflectance="0"/>
 
-<!-- cal_checkerboard -->
+<!-- cal_checkerboard NOT NEEDED AS SIM CAM HAS NO DISTORTION -->
       <!-- <texture name="cal_checkerboard" type="2d" file="textures/cal_checkerboard.png" />
       <material name="cal_checkerboard_material" texture="cal_checkerboard" specular="0.1" shininess="0.1"/> -->
 
@@ -152,7 +152,7 @@
 
 <!-- Aruco tags -->
 
-<!-- Wall Tags -->
+<!-- Wall Tags 400x400 -->
 
 
 <!-- North -->
@@ -187,7 +187,7 @@
 
 <!-- Docking Tags -->
 
-    <!-- 100x100mm Dock Tag -->
+    <!-- 200x200mm Dock Tag -->
     <geom name="aruco_marker_00"
           type="box"
           pos="2.4 2.5 0.3"
@@ -196,7 +196,7 @@
 
 
 
-    <!-- 50x50mm//25x25mm Fine Dock Tag -->
+    <!-- 100x100mm//50x50mm Fine Dock Tag -->
     <geom name="aruco_marker_99"
           type="box"
           pos="2.4 2.5 0.1"
