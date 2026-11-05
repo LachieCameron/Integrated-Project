@@ -25,6 +25,7 @@ if PROJECT_ROOT not in sys.path:
     sys.path.insert(0, PROJECT_ROOT)
 
 from src.estimation.ekf import RobotEKF, wrap_angle
+from src.sensing.IMU import IMUSensor
 from src.sensing.cam import RaspiCamera
 from src.sensing.wheel_encoder import WheelEncoder
 
@@ -39,25 +40,10 @@ def load_track_helpers():
     return module
 
 
-def add_pose_box(scene, pose, color):
-    index = scene.ngeom
-    scene.ngeom += 1
-    yaw = float(pose[2])
-    c, s = math.cos(yaw), math.sin(yaw)
-    rotation = np.array([c, -s, 0.0, s, c, 0.0, 0.0, 0.0, 1.0], dtype=np.float32)
-    mujoco.mjv_initGeom(
-        scene.geoms[index],
-        type=mujoco.mjtGeom.mjGEOM_BOX,
-        size=[0.14, 0.14, 0.05],
-        pos=[float(pose[0]), float(pose[1]), 0.05],
-        mat=rotation,
-        rgba=color,
-    )
-
-
 def main():
     parser = argparse.ArgumentParser()
     parser.add_argument("--no-aruco", action="store_true")
+    parser.add_argument("--imu", action="store_true")
     parser.add_argument("--scale-error", type=float, default=0.0)
     parser.add_argument("--seconds", type=float, default=30.0)
     args = parser.parse_args()
@@ -65,7 +51,13 @@ def main():
 
     model = mujoco.MjModel.from_xml_path(helpers.SCENE)
     data = mujoco.MjData(model)
+    data_ghost = mujoco.MjData(model)
+    ghost_options = mujoco.MjvOption()
+    ghost_options.flags[mujoco.mjtVisFlag.mjVIS_TRANSPARENT] = True
+    ghost_perturb = mujoco.MjvPerturb()
+    ghost_category = mujoco.mjtCatBit.mjCAT_DYNAMIC
     camera = RaspiCamera(model)
+    imu = IMUSensor(model) if args.imu else None
     encoder = WheelEncoder(model)
     ekf = RobotEKF(model=model)
     rng = np.random.default_rng(7)
@@ -81,7 +73,14 @@ def main():
             data.ctrl[:] = [-2.0, 3.0]
             mujoco.mj_step(model, data)
             d_left, d_right, _, _ = encoder.step(data)
-            pose = ekf.update(d_left * scales[0], d_right * scales[1], dt)
+            gyro_z = None if imu is None else float(imu.read(data)[1][2])
+            pose = ekf.update(
+                d_left * scales[0],
+                d_right * scales[1],
+                dt,
+                imu_gyro_z=gyro_z,
+                imu_rate_std=0.03 if imu is not None else None,
+            )
 
             if not args.no_aruco and int(round(data.time / dt)) % camera_period == 0:
                 frame = camera.capture_cv_frame(data)
@@ -93,7 +92,7 @@ def main():
                         )
                         if measurement is not None:
                             covariance = np.diag([0.02, 0.02, 0.05])
-                            pose = ekf.correct_pose(measurement, covariance)
+                            pose = ekf.fuse_pose(measurement, covariance)
                             accepted += 1
                             break
 
@@ -104,8 +103,23 @@ def main():
             error = pose - true_pose
             error[2] = wrap_angle(error[2])
 
+            data_ghost.qpos[0] = pose[0]
+            data_ghost.qpos[1] = pose[1]
+            data_ghost.qpos[2] = 0.01
+            data_ghost.qpos[3] = math.cos(pose[2] / 2.0)
+            data_ghost.qpos[4:6] = 0.0
+            data_ghost.qpos[6] = math.sin(pose[2] / 2.0)
+            mujoco.mj_forward(model, data_ghost)
+
             viewer.user_scn.ngeom = 0
-            add_pose_box(viewer.user_scn, pose, [0.0, 1.0, 0.0, 0.35])
+            mujoco.mjv_addGeoms(
+                model,
+                data_ghost,
+                ghost_options,
+                ghost_perturb,
+                ghost_category,
+                viewer.user_scn,
+            )
             if data.time - last_print >= 0.5:
                 last_print = data.time
                 print(

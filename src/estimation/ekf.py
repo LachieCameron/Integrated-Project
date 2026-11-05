@@ -1,4 +1,4 @@
-"""Wheel-odometry extended Kalman filter for a differential-drive robot."""
+"""Wheel-odometry extended Kalman filter with optional sensor fusion."""
 
 import numpy as np
 import mujoco
@@ -54,6 +54,8 @@ class RobotEKF:
         if self.P.shape != (3, 3):
             raise ValueError("initial_covariance must have shape (3, 3)")
         self.state[2] = wrap_angle(float(self.state[2]))
+        self._gyro_heading: float | None = None
+        self._gyro_heading_variance: float | None = None
 
     def predict(self, d_left: float, d_right: float) -> np.ndarray:
         """Propagate pose and covariance from one pair of wheel distances."""
@@ -100,18 +102,31 @@ class RobotEKF:
         self.P = 0.5 * (self.P + self.P.T)
         return self.state.copy()
 
-    def update(self, d_left: float, d_right: float, dt: float) -> np.ndarray:
+    def update(
+        self,
+        d_left: float,
+        d_right: float,
+        dt: float,
+        imu_gyro_z: float | None = None,
+        imu_rate_std: float | None = None,
+    ) -> np.ndarray:
         """Advance the filter using encoder distances for one time step.
 
         ``dt`` is accepted to keep the estimator interface aligned with the
         simulation loop.  Wheel encoder values are already distances, so it
-        does not alter the prediction.
+        does not alter the prediction.  If ``imu_gyro_z`` is supplied, the
+        integrated gyro heading is fused after the wheel prediction.
         """
         if not np.isfinite(dt) or dt <= 0.0:
             raise ValueError("dt must be a positive finite value")
-        return self.predict(d_left, d_right)
+        self.predict(d_left, d_right)
+        if imu_gyro_z is not None:
+            if imu_rate_std is None:
+                raise ValueError("imu_rate_std is required with imu_gyro_z")
+            self.fuse_gyro(imu_gyro_z, dt, imu_rate_std)
+        return self.state.copy()
 
-    def correct_pose(
+    def fuse_pose(
         self,
         measurement: np.ndarray,
         covariance: np.ndarray,
@@ -151,6 +166,35 @@ class RobotEKF:
         self.P = (identity - gain) @ self.P
         self.P = 0.5 * (self.P + self.P.T)
         return self.state.copy()
+
+    def correct_pose(
+        self,
+        measurement: np.ndarray,
+        covariance: np.ndarray,
+    ) -> np.ndarray:
+        """Backward-compatible alias for :meth:`fuse_pose`."""
+        return self.fuse_pose(measurement, covariance)
+
+    def fuse_gyro(self, yaw_rate: float, dt: float, rate_std: float) -> np.ndarray:
+        """Fuse a z-axis gyro rate through an integrated yaw measurement.
+
+        The gyro heading is initialized from the current EKF heading, then
+        propagated with the measured rate. Its variance grows with the
+        configured rate noise before the absolute yaw update. This keeps the
+        wheel prediction and optional IMU correction inside the EKF API.
+        """
+        if not np.isfinite(yaw_rate) or not np.isfinite(dt) or dt <= 0.0:
+            raise ValueError("yaw_rate must be finite and dt must be positive")
+        if not np.isfinite(rate_std) or rate_std <= 0.0:
+            raise ValueError("rate_std must be finite and positive")
+
+        if self._gyro_heading is None:
+            self._gyro_heading = float(self.state[2])
+            self._gyro_heading_variance = float(self.P[2, 2])
+        self._gyro_heading = wrap_angle(self._gyro_heading + float(yaw_rate) * dt)
+        assert self._gyro_heading_variance is not None
+        self._gyro_heading_variance += float(rate_std) ** 2 * dt**2
+        return self.correct_yaw(self._gyro_heading, self._gyro_heading_variance)
 
     def correct_yaw(self, yaw: float, variance: float) -> np.ndarray:
         """Correct heading with an absolute yaw measurement."""

@@ -23,6 +23,7 @@ if PROJECT_ROOT not in sys.path:
     sys.path.insert(0, PROJECT_ROOT)
 
 from src.estimation.ekf import RobotEKF, wrap_angle
+from src.sensing.IMU import IMUSensor
 from src.sensing.cam import RaspiCamera
 from src.sensing.wheel_encoder import WheelEncoder
 
@@ -55,6 +56,7 @@ def add_pose_box(scene, pose, color):
 
 def main():
     parser = argparse.ArgumentParser()
+    parser.add_argument("--imu", action="store_true")
     parser.add_argument("--scale-error", type=float, default=0.02)
     parser.add_argument("--seconds", type=float, default=30.0)
     args = parser.parse_args()
@@ -63,6 +65,7 @@ def main():
     model = mujoco.MjModel.from_xml_path(helpers.SCENE)
     data = mujoco.MjData(model)
     camera = RaspiCamera(model)
+    imu = IMUSensor(model) if args.imu else None
     encoder = WheelEncoder(model)
     odom = RobotEKF(model=model)
     fused = RobotEKF(model=model)
@@ -81,8 +84,15 @@ def main():
             d_left, d_right, _, _ = encoder.step(data)
             d_left *= scales[0]
             d_right *= scales[1]
+            gyro_z = None if imu is None else float(imu.read(data)[1][2])
             odom_pose = odom.update(d_left, d_right, dt)
-            fused_pose = fused.update(d_left, d_right, dt)
+            fused_pose = fused.update(
+                d_left,
+                d_right,
+                dt,
+                imu_gyro_z=gyro_z,
+                imu_rate_std=0.03 if imu is not None else None,
+            )
 
             if int(round(data.time / dt)) % camera_period == 0:
                 frame = camera.capture_cv_frame(data)
@@ -93,7 +103,7 @@ def main():
                             camera, int(marker_id), marker_corners, 0.4
                         )
                         if measurement is not None:
-                            fused_pose = fused.correct_pose(
+                            fused_pose = fused.fuse_pose(
                                 measurement, np.diag([0.02, 0.02, 0.05])
                             )
                             accepted += 1

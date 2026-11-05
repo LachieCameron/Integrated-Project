@@ -1,5 +1,5 @@
 #!/usr/bin/env python3
-"""Track A pipeline: wheel-odometry EKF -> navigation -> LQR tracker -> MuJoCo.
+"""Track A pipeline: fused EKF -> navigation -> LQR tracker -> MuJoCo.
 
 Run from the project root::
 
@@ -10,7 +10,9 @@ Run from the project root::
     python scripts/run_track_a.py --viewer                            # watch one run (mjpython on macOS)
 
 Ground-truth rule: the controller and navigator receive only ``ekf.state`` and
-LiDAR ranges.  ``data.qpos`` / ``data.xpos`` are read in exactly two places,
+LiDAR ranges.  Wheel odometry is the prediction source; optional IMU gyro and
+ArUco wall-marker observations are fused by ``RobotEKF``.  ``data.qpos`` /
+``data.xpos`` are read in exactly two places,
 both marked ``# GROUND TRUTH``: placing the robot at its start pose, and the
 evaluation log.
 """
@@ -37,6 +39,7 @@ from src.control.navigation import NavConfig, Navigator, State, boxes_from_model
 from src.estimation.ekf import RobotEKF
 from src.kinematics.differential_drive import DifferentialDrive, wrap_angle
 from src.sensing.lidar_scan import Lidar
+from src.sensing.IMU import IMUSensor
 from src.sensing.wheel_encoder import WheelEncoder
 from src.utils.config import AppConfig, load_config
 
@@ -163,6 +166,7 @@ def run_trial(
     drive = DifferentialDrive.from_model(model)
     lidar = Lidar(model)
     encoder = WheelEncoder(model)
+    imu = IMUSensor(model) if config.ekf.gyro_enabled else None
     config = app_config or load_config(os.path.join(project_root, "config", "default.yaml"))
     cfg = nav_config or nav_config_from_app(config, unknown_obstacles)
     tracker = LQRTrajectoryTracker(
@@ -218,9 +222,16 @@ def run_trial(
         d_l = d_l * scale_l + (rng.normal(0.0, enc_noise) if enc_noise else 0.0)
         d_r = d_r * scale_r + (rng.normal(0.0, enc_noise) if enc_noise else 0.0)
         ranges = lidar.read(data)
+        gyro_z = None if imu is None else float(imu.read(data)[1][2])
 
         # ---- estimation (the ONLY pose the controller sees) -----------------------------
-        pose_est = ekf.update(d_l, d_r, CTRL_DT)
+        pose_est = ekf.update(
+            d_l,
+            d_r,
+            CTRL_DT,
+            imu_gyro_z=gyro_z,
+            imu_rate_std=config.ekf.gyro_rate_std if imu is not None else None,
+        )
 
         marker_ids = None
         shown = None
@@ -235,7 +246,7 @@ def run_trial(
                     )
                     if measurement is not None:
                         covariance = np.diag(config.ekf.camera_measurement_covariance)
-                        pose_est = ekf.correct_pose(measurement, covariance)
+                        pose_est = ekf.fuse_pose(measurement, covariance)
                         break
 
         # ---- navigation + LQR -----------------------------------------------------------
