@@ -30,19 +30,41 @@
               texrepeat="5 5"
               reflectance="0"/>
 
-<!-- cal_checkerboard -->
+<!-- cal_checkerboard NOT NEEDED AS SIM CAM HAS NO DISTORTION -->
       <!-- <texture name="cal_checkerboard" type="2d" file="textures/cal_checkerboard.png" />
       <material name="cal_checkerboard_material" texture="cal_checkerboard" specular="0.1" shininess="0.1"/> -->
 
 <!-- Aruco tags -->
 
+<!-- Docking Course Aruco Tag -->
      <texture name="aruco_texture_00" type="2d" file="textures/aruco_00.png"/>
      <material name="aruco_material_00" texture="aruco_texture_00" specular="0.1" shininess="0.1"/>
 
-
+<!-- Docking Fine Aruco Tag -->
      <texture name="aruco_texture_99" type="2d" file="textures/aruco_99.png"/>
      <material name="aruco_material_99" texture="aruco_texture_99" specular="0.1" shininess="0.1"/>
 
+<!-- Wall Tags -->
+
+<!-- 289 // +N+ -->
+<!-- 406 // W+E -->
+<!-- 123 // +S+ -->
+
+      <!-- North 88 -->
+     <texture name="aruco_texture_88" type="2d" file="textures/aruco_88.png"/>
+     <material name="aruco_material_88" texture="aruco_texture_88" specular="0.1" shininess="0.1"/>
+
+     <!-- East 66 -->
+     <texture name="aruco_texture_66" type="2d" file="textures/aruco_66.png"/>
+     <material name="aruco_material_66" texture="aruco_texture_66" specular="0.1" shininess="0.1"/>
+
+     <!-- south 22 -->
+     <texture name="aruco_texture_22" type="2d" file="textures/aruco_22.png"/>
+     <material name="aruco_material_22" texture="aruco_texture_22" specular="0.1" shininess="0.1"/>
+
+     <!-- West 44 -->
+     <texture name="aruco_texture_44" type="2d" file="textures/aruco_44.png"/>
+     <material name="aruco_material_44" texture="aruco_texture_44" specular="0.1" shininess="0.1"/>
      
 
 
@@ -128,8 +150,44 @@
           size="0.556 0.001 0.359"
           material="cal_checkerboard_material"/> -->
 
+<!-- Aruco tags -->
 
-    <!-- 100x100mm Dock Tag -->
+<!-- Wall Tags 400x400 -->
+
+
+<!-- North -->
+    <geom name="aruco_marker_88"
+          type="box"
+          pos="0 2.9 0.5"
+          size="0.2 0.001 0.2"
+          material="aruco_material_88"/>
+<!-- East -->
+    <geom name="aruco_marker_66"
+          type="box"
+          pos="2.9 0 0.5"
+          size="0.2 0.001 0.2"
+          euler="0 0 -1.5708"
+          material="aruco_material_66"/>
+<!-- South -->
+    <geom name="aruco_marker_22"
+          type="box"
+          pos="0 -2.9 0.5"
+          size="0.2 0.001 0.2"
+          euler="0 0 3.14159"
+          material="aruco_material_22"/>
+
+<!-- West -->
+    <geom name="aruco_marker_44"
+          type="box"
+          pos="-2.9 0 0.5"
+          size="0.2 0.001 0.2"
+          euler="0 0 1.5708"
+          material="aruco_material_44"/>
+
+
+<!-- Docking Tags -->
+
+    <!-- 200x200mm Dock Tag -->
     <geom name="aruco_marker_00"
           type="box"
           pos="2.4 2.5 0.3"
@@ -137,11 +195,12 @@
           material="aruco_material_00"/>
 
 
-    <!-- 50x50mm Fine Dock Tag -->
+
+    <!-- 100x100mm//50x50mm Fine Dock Tag -->
     <geom name="aruco_marker_99"
           type="box"
           pos="2.4 2.5 0.1"
-          size="0.05 0.001 0.05"
+          size="0.025 0.001 0.025"
           material="aruco_material_99"/>
       
   </worldbody>

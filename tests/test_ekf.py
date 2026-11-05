@@ -34,6 +34,31 @@ def test_gyro_value_cannot_change_wheel_odometry_prediction():
     np.testing.assert_allclose(first.P, second.P)
 
 
+def test_optional_gyro_fusion_corrects_wheel_heading():
+    ekf = RobotEKF(
+        wheel_base=0.288,
+        initial_covariance=np.eye(3) * 0.1,
+    )
+
+    ekf.update(0.0, 0.0, 0.1, imu_gyro_z=1.0, imu_rate_std=0.01)
+    ekf.update(0.0, 0.0, 0.1, imu_gyro_z=1.0, imu_rate_std=0.01)
+
+    assert ekf.state[2] > 0.0
+    assert ekf.state[2] < 0.2
+
+
+def test_pose_fusion_is_owned_by_ekf():
+    ekf = RobotEKF(
+        wheel_base=0.288,
+        initial_state=np.array([1.0, 0.0, 0.0]),
+        initial_covariance=np.eye(3) * 0.1,
+    )
+
+    corrected = ekf.fuse_pose(np.zeros(3), np.eye(3) * 0.01)
+
+    assert corrected[0] < 1.0
+
+
 def test_absolute_pose_correction_reduces_drifted_state():
     ekf = RobotEKF(
         wheel_base=0.288,

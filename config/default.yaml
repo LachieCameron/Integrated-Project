@@ -48,7 +48,8 @@ obstacle_avoidance:
 camera:
   calibration_file: null
   marker_size_m: 0.20
-  aruco_dictionary: DICT_5X5_50
+  wall_marker_size_m: 0.40
+  aruco_dictionary: DICT_5X5_100
   detection_rate_hz: 30
 
 

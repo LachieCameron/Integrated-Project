@@ -22,29 +22,41 @@ if project_root not in sys.path:
     sys.path.insert(0, project_root)
 
 from src.control.lqr import LQRTrajectoryTracker
-from src.control.navigation import NavConfig, Navigator, State
+from src.control.navigation import Navigator, State
 from src.kinematics.differential_drive import DifferentialDrive
 from src.sensing.lidar_scan import Lidar
+from src.utils.config import AppConfig, load_config
 
 _spec = importlib.util.spec_from_file_location("run_track_a", os.path.join(project_root, "scripts", "run_track_a.py"))
 rta = importlib.util.module_from_spec(_spec)
 _spec.loader.exec_module(rta)
 
 
-def run(model, start, q_scale=1.0, r_scale=1.0, t_max=150.0):
+def run(model, start, config: AppConfig, q_scale=1.0, r_scale=1.0):
     data = mujoco.MjData(model)
     drive = DifferentialDrive.from_model(model)
     lidar = Lidar(model)
-    cfg = NavConfig()
-    base = LQRTrajectoryTracker(rta.CTRL_DT)
-    tracker = LQRTrajectoryTracker(rta.CTRL_DT, q_diag=np.diag(base.Q) * q_scale, r_diag=np.diag(base.R) * r_scale,
-                                   v_max=cfg.v_max + 0.04, w_max=cfg.w_max)
+    cfg = rta.nav_config_from_app(config)
+    base = LQRTrajectoryTracker(
+        rta.CTRL_DT,
+        q_diag=config.lqr.q,
+        r_diag=config.lqr.r,
+        v_max=config.lqr.max_linear_velocity,
+        w_max=config.lqr.max_angular_velocity,
+    )
+    tracker = LQRTrajectoryTracker(
+        rta.CTRL_DT,
+        q_diag=np.diag(base.Q) * q_scale,
+        r_diag=np.diag(base.R) * r_scale,
+        v_max=config.lqr.max_linear_velocity,
+        w_max=config.lqr.max_angular_velocity,
+    )
     nav = Navigator(model, rta.CTRL_DT, cfg, tracker=tracker)
     data.qpos[:2] = start[:2]
     data.qpos[3:7] = rta.yaw_to_quat(start[2])
     mujoco.mj_forward(model, data)
     errs, cmds, collisions, out = [], [], 0, None
-    for _ in range(int(t_max / rta.CTRL_DT)):
+    for _ in range(int(config.evaluation.timeout_s / rta.CTRL_DT)):
         pose = np.array([data.qpos[0], data.qpos[1], 2.0 * math.atan2(data.qpos[6], data.qpos[3])])  # TRUE STATE
         out = nav.update(pose, lidar.read(data))
         if out.state == State.TRACK:
@@ -68,19 +80,23 @@ def run(model, start, q_scale=1.0, r_scale=1.0, t_max=150.0):
 
 def main():
     ap = argparse.ArgumentParser()
-    ap.add_argument("--trials", type=int, default=20)
-    ap.add_argument("--seed", type=int, default=1)
+    ap.add_argument("--config", type=str, default=os.path.join(project_root, "config", "default.yaml"))
+    ap.add_argument("--trials", type=int, default=None)
+    ap.add_argument("--seed", type=int, default=None)
     ap.add_argument("--q-scale", type=float, default=1.0, help="multiply Q (state cost)")
     ap.add_argument("--r-scale", type=float, default=1.0, help="multiply R (input cost)")
     args = ap.parse_args()
+    config = load_config(args.config)
+    trials = config.evaluation.trial_count if args.trials is None else args.trials
+    seed = config.evaluation.random_seed if args.seed is None else args.seed
     model = mujoco.MjModel.from_xml_path(rta.SCENE)
-    rng = np.random.default_rng(args.seed)
+    rng = np.random.default_rng(seed)
     rows = []
-    for i in range(args.trials):
+    for i in range(trials):
         start = rta.free_start_pose(model, rng)
-        r = run(model, start, args.q_scale, args.r_scale)
+        r = run(model, start, config, args.q_scale, args.r_scale)
         rows.append(r)
-        print(f"[{i + 1:2d}/{args.trials}] done={r['done']} coll={r['collisions']} t={r['time']:.1f}s "
+        print(f"[{i + 1:2d}/{trials}] done={r['done']} coll={r['collisions']} t={r['time']:.1f}s "
               f"track_rmse={r['rmse'] * 1000:.1f}mm dock_err={r['final'] * 1000:.1f}mm yaw_err={math.degrees(r['yaw']):.1f}deg")
     ok = [r for r in rows if r["done"] and r["collisions"] == 0]
     print(f"\ncompleted without collision: {len(ok)}/{len(rows)}")

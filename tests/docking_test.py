@@ -3,6 +3,8 @@
 import os
 import sys
 import math
+import time
+import importlib.util
 
 import cv2
 import mujoco
@@ -27,6 +29,18 @@ from src.control.Tag_follow import (
     DiffDriveController,
     TagFollower,
 )
+from src.estimation.ekf import RobotEKF
+from src.sensing.wheel_encoder import WheelEncoder
+
+
+def load_track_helpers():
+    path = os.path.join(PROJECT_ROOT, "scripts", "run_track_a.py")
+    spec = importlib.util.spec_from_file_location("run_track_a", path)
+    if spec is None or spec.loader is None:
+        raise RuntimeError("could not load Track A helpers")
+    module = importlib.util.module_from_spec(spec)
+    spec.loader.exec_module(module)
+    return module
 
 
 # ============================================================
@@ -40,11 +54,11 @@ COARSE_ID = 0
 FINE_ID = 99
 
 # ID 0 must reach this size before ID 99 is considered.
-COARSE_SWITCH_WIDTH = 100.0
+COARSE_SWITCH_WIDTH = 120.0
 
 # ID 99 must be detected reliably before switching.
-FINE_SWITCH_WIDTH = 20.0
-FINE_CONFIRM_FRAMES = 2
+FINE_SWITCH_WIDTH = 60.0
+FINE_CONFIRM_FRAMES = 5
 
 # Final charging conditions.
 FINE_STOP_WIDTH = 125.0
@@ -58,7 +72,7 @@ INITIAL_HEADING = math.pi / 2
 STOP_DISTANCE = 0.20
 CLEAR_DISTANCE = 0.40
 
-AVOID_DISTANCE = 0.55
+AVOID_DISTANCE = 0.8
 AVOID_TURN_RAD = math.radians(35)
 AVOID_TURN_W = 0.50
 AVOID_FORWARD_V = 0.12
@@ -71,6 +85,8 @@ DOCK_SAFETY_DISTANCE = 0.12
 
 MAX_WHEEL_SPEED = 5.0
 WHEEL_RADIUS = 0.033
+BASE_VISUAL_CENTER_X = -0.064
+BASE_VISUAL_CENTER_Y = 0.0
 
 ANGLES = np.arange(-90, 91, 15)
 
@@ -196,6 +212,11 @@ def draw_charged_banner(image):
 # ============================================================
 
 def main():
+    import argparse
+    parser = argparse.ArgumentParser()
+    parser.add_argument("--full-ghost", action="store_true", help="show the full robot ghost")
+    parser.add_argument("--no-ghost", action="store_true", help="disable ghost rendering")
+    args = parser.parse_args()
 
     xml_path = os.path.join(
         PROJECT_ROOT,
@@ -213,6 +234,7 @@ def main():
 
     camera = RaspiCamera(model)
     imu = IMUSensor(model)
+    track_helpers = load_track_helpers()
     diff_drive = DiffDriveController()
 
     follower = TagFollower(
@@ -292,7 +314,16 @@ def main():
     # ROBOT STATE
     # ========================================================
 
+    initial_robot_yaw = 2.0 * math.atan2(float(data.qpos[6]), float(data.qpos[3]))
     heading = INITIAL_HEADING
+    ghost_encoder = WheelEncoder(model)
+    ghost_ekf = RobotEKF(
+        model=model,
+        initial_state=np.array(
+            [float(data.qpos[0]), float(data.qpos[1]), initial_robot_yaw]
+        ),
+    )
+    pending_camera_pose = None
 
     last_sim_time = float(data.time)
     last_cam_time = -CAM_INTERVAL
@@ -378,6 +409,8 @@ def main():
         nonlocal travelled_distance, avoid_start_distance
         nonlocal last_left_encoder, last_right_encoder
         nonlocal last_annotated, last_message_mode
+        nonlocal ghost_encoder, ghost_ekf
+        nonlocal pending_camera_pose
 
         now = float(data.time)
 
@@ -418,13 +451,20 @@ def main():
 
             last_left_encoder = None
             last_right_encoder = None
+            ghost_encoder = WheelEncoder(model)
+            ghost_ekf = RobotEKF(
+                model=model,
+                initial_state=np.array(
+                    [float(data.qpos[0]), float(data.qpos[1]), initial_robot_yaw]
+                ),
+            )
+            pending_camera_pose = None
 
             last_annotated = None
             last_message_mode = None
 
         dt = max(0.0, now - last_sim_time)
         last_sim_time = now
-
         # ====================================================
         # ROBOT CHARGED: STOP ALL MOVEMENT
         # ====================================================
@@ -622,6 +662,18 @@ def main():
                     for value in np.asarray(ids).reshape(-1)
                 ]
             )
+
+            pending_camera_pose = None
+            if ids is not None:
+                for marker_corners, marker_id in zip(
+                    corners, np.asarray(ids).reshape(-1)
+                ):
+                    measurement = track_helpers.robot_pose_from_wall_marker(
+                        camera, int(marker_id), marker_corners, 0.4
+                    )
+                    if measurement is not None:
+                        pending_camera_pose = measurement
+                        break
 
             coarse_width, coarse_error = marker_measurement(
                 corners,
@@ -963,6 +1015,57 @@ def main():
             )
         )
 
+    def run_with_ghost(full):
+        nonlocal pending_camera_pose
+        ghost_data = mujoco.MjData(model)
+        ghost_options = mujoco.MjvOption()
+        ghost_options.flags[mujoco.mjtVisFlag.mjVIS_TRANSPARENT] = True
+        ghost_perturb = mujoco.MjvPerturb()
+        with mujoco.viewer.launch_passive(model, data) as viewer:
+            while viewer.is_running():
+                start = time.time()
+                mujoco.mj_step(model, data)
+                ghost_left, ghost_right, _, _ = ghost_encoder.step(data)
+                gyro_z = float(imu.read(data)[1][2])
+                ghost_ekf.update(
+                    ghost_left,
+                    ghost_right,
+                    model.opt.timestep,
+                    imu_gyro_z=gyro_z,
+                    imu_rate_std=0.03,
+                )
+                if pending_camera_pose is not None:
+                    ghost_ekf.fuse_pose(
+                        pending_camera_pose,
+                        np.diag([0.02, 0.02, 0.05]),
+                    )
+                    pending_camera_pose = None
+                pose = ghost_ekf.state.copy()
+                viewer.user_scn.ngeom = 0
+                if full:
+                    ghost_data.qpos[0:3] = [pose[0], pose[1], 0.01]
+                    ghost_data.qpos[3:7] = [
+                        math.cos(pose[2] / 2.0), 0.0, 0.0, math.sin(pose[2] / 2.0)
+                    ]
+                    mujoco.mj_forward(model, ghost_data)
+                    mujoco.mjv_addGeoms(
+                        model, ghost_data, ghost_options, ghost_perturb,
+                        mujoco.mjtCatBit.mjCAT_DYNAMIC, viewer.user_scn
+                    )
+                else:
+                    c, s = math.cos(pose[2]), math.sin(pose[2])
+                    viewer.user_scn.ngeom = 1
+                    mujoco.mjv_initGeom(
+                        viewer.user_scn.geoms[0], mujoco.mjtGeom.mjGEOM_BOX,
+                        np.array([0.14, 0.14, 0.05]),
+                        np.array([pose[0] + BASE_VISUAL_CENTER_X*c - BASE_VISUAL_CENTER_Y*s,
+                                  pose[1] + BASE_VISUAL_CENTER_X*s + BASE_VISUAL_CENTER_Y*c, 0.05]),
+                        np.array([c, -s, 0, s, c, 0, 0, 0, 1]),
+                        np.array([0, 1, 0, 0.35], dtype=np.float32),
+                    )
+                viewer.sync()
+                time.sleep(max(0.0, model.opt.timestep - (time.time() - start)))
+
     # ========================================================
     # LAUNCH
     # ========================================================
@@ -970,7 +1073,10 @@ def main():
     try:
 
         mujoco.set_mjcb_control(control_loop)
-        mujoco.viewer.launch(model, data)
+        if not args.no_ghost:
+            run_with_ghost(args.full_ghost)
+        else:
+            mujoco.viewer.launch(model, data)
 
     except KeyboardInterrupt:
 

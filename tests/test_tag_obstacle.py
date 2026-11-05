@@ -15,15 +15,8 @@ if project_root not in sys.path:
 from src.sensing.cam import RaspiCamera
 from src.sensing.IMU import IMUSensor
 from src.control.Tag_follow import DiffDriveController, TagFollower
+from src.utils.config import load_config
 
-CAM_INTERVAL = 1.0 / 30.0
-STOP_DISTANCE = 0.2
-CLEAR_DISTANCE = 0.4
-AVOID_DISTANCE = 0.5
-AVOID_TURN_RAD = math.radians(35)  # Shorter turn than previous 90 degrees
-AVOID_FORWARD_V = 0.15  # m/s; keep consistent with the tag-following speed limit
-AVOID_TURN_W = 0.45      # rad/s
-MAX_WHEEL_SPEED = 5.0  # rad/s; verify against XML actuator limits
 ANGLES = list(range(-90, 91, 15))
 
 
@@ -38,10 +31,34 @@ def main():
 
     model = mujoco.MjModel.from_xml_path(xml_path)
     data = mujoco.MjData(model)
+    config = load_config(os.path.join(project_root, "config", "default.yaml"))
+    tag_config = config.tag_follower
+    obstacle_config = config.obstacle_avoidance
+    cam_interval = 1.0 / config.camera.detection_rate_hz
+    stop_distance = obstacle_config.stop_distance
+    clear_distance = obstacle_config.slow_distance
+    avoid_distance = obstacle_config.avoid_distance
+    avoid_turn_rad = math.radians(obstacle_config.turn_angle_deg)
+    avoid_forward_v = config.lqr.max_linear_velocity
+    avoid_turn_w = config.lqr.max_angular_velocity
+    max_wheel_speed = (
+        config.robot.max_wheel_speed
+        if config.robot.max_wheel_speed is not None
+        else float(abs(model.actuator_ctrlrange[0, 1]))
+    )
     camera = RaspiCamera(model)
     imu = IMUSensor(model)
     diff_drive = DiffDriveController()
-    follower = TagFollower(target_ids=(0, 99), image_width=camera.width)
+    follower = TagFollower(
+        target_ids=tag_config.target_ids,
+        image_width=camera.width,
+        Kp_linear=tag_config.kp_linear,
+        Kp_angular=tag_config.kp_angular,
+        scan_speed=tag_config.scan_speed,
+        target_width_pixels=tag_config.target_width_pixels,
+        max_linear_v=config.lqr.max_linear_velocity,
+        max_angular_w=config.lqr.max_angular_velocity,
+    )
 
     # MuJoCo rangefinders must already be defined in the XML.
     lidar_ids = []
@@ -61,7 +78,7 @@ def main():
         raise RuntimeError('Expected at least two wheel actuators')
 
     heading = 0.0
-    last_cam_time = -CAM_INTERVAL
+    last_cam_time = -cam_interval
     desired_v, desired_w = 0.0, 0.0
     mode = 'FOLLOW'
     turn_start_heading = 0.0
@@ -100,7 +117,7 @@ def main():
         # Begin the avoidance manoeuvre before the emergency stop distance.
         # The previous trigger used STOP_DISTANCE, so CLEAR_DISTANCE only
         # capped speed to the tag follower's existing 0.15 m/s maximum.
-        if mode == 'FOLLOW' and desired_v > 0 and front < CLEAR_DISTANCE:
+        if mode == 'FOLLOW' and desired_v > 0 and front < clear_distance:
             mode = 'AVOID_TURN'
             turn_start_heading = heading
             turn_direction = 1 if left >= right else -1
@@ -108,36 +125,36 @@ def main():
         if mode == 'AVOID_TURN':
             # IMU integration is wrapped; signed angle error handles wraparound.
             turned = turn_direction * angle_difference(heading, turn_start_heading)
-            if turned >= AVOID_TURN_RAD:
+            if turned >= avoid_turn_rad:
                 mode = 'AVOID_FORWARD'
                 forward_start = position
                 desired_v, desired_w = 0.0, 0.0
             else:
-                desired_v, desired_w = 0.0, AVOID_TURN_W * turn_direction
+                desired_v, desired_w = 0.0, avoid_turn_w * turn_direction
 
         elif mode == 'AVOID_FORWARD':
             travelled = float(np.linalg.norm(position - forward_start))
-            if front < STOP_DISTANCE:
+            if front < stop_distance:
                 mode = 'AVOID_TURN'
                 turn_start_heading = heading
                 turn_direction = 1 if left >= right else -1
                 desired_v, desired_w = 0.0, 0.0
-            elif travelled >= AVOID_DISTANCE:
+            elif travelled >= avoid_distance:
                 mode = 'FOLLOW'
                 desired_v, desired_w = 0.0, 0.0
             else:
-                desired_v, desired_w = AVOID_FORWARD_V, 0.0
+                desired_v, desired_w = avoid_forward_v, 0.0
 
         # Keep the original tag follower running when not avoiding obstacles.
         # Camera processing is paused during avoidance to avoid advancing its scan state.
-        if data.time - last_cam_time >= CAM_INTERVAL:
+        if data.time - last_cam_time >= cam_interval:
             last_cam_time = data.time
             frame = camera.capture_cv_frame(data)
             corners, ids, annotated = camera.detect_markers(frame)
             if mode == 'FOLLOW':
                 desired_v, desired_w = follower.compute_commands(corners, ids, heading)
                 # Immediate LiDAR override, including after new camera commands.
-                if desired_v > 0 and front < CLEAR_DISTANCE:
+                if desired_v > 0 and front < clear_distance:
                     mode = 'AVOID_TURN'
                     turn_start_heading = heading
                     turn_direction = 1 if left >= right else -1
@@ -157,8 +174,8 @@ def main():
             last_message_mode = mode
 
         left_wheel, right_wheel = diff_drive.twist_to_wheel_velocities(desired_v, desired_w)
-        data.ctrl[0] = float(np.clip(left_wheel, -MAX_WHEEL_SPEED, MAX_WHEEL_SPEED))
-        data.ctrl[1] = float(np.clip(right_wheel, -MAX_WHEEL_SPEED, MAX_WHEEL_SPEED))
+        data.ctrl[0] = float(np.clip(left_wheel, -max_wheel_speed, max_wheel_speed))
+        data.ctrl[1] = float(np.clip(right_wheel, -max_wheel_speed, max_wheel_speed))
 
     try:
         mujoco.set_mjcb_control(control_loop)

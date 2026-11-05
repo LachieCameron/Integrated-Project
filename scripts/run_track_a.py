@@ -1,5 +1,5 @@
 #!/usr/bin/env python3
-"""Track A pipeline: wheel-odometry EKF -> navigation -> LQR tracker -> MuJoCo.
+"""Track A pipeline: fused EKF -> navigation -> LQR tracker -> MuJoCo.
 
 Run from the project root::
 
@@ -10,7 +10,9 @@ Run from the project root::
     python scripts/run_track_a.py --viewer                            # watch one run (mjpython on macOS)
 
 Ground-truth rule: the controller and navigator receive only ``ekf.state`` and
-LiDAR ranges.  ``data.qpos`` / ``data.xpos`` are read in exactly two places,
+LiDAR ranges.  Wheel odometry is the prediction source; optional IMU gyro and
+ArUco wall-marker observations are fused by ``RobotEKF``.  ``data.qpos`` /
+``data.xpos`` are read in exactly two places,
 both marked ``# GROUND TRUTH``: placing the robot at its start pose, and the
 evaluation log.
 """
@@ -32,21 +34,69 @@ if project_root not in sys.path:
     sys.path.insert(0, project_root)
 
 from src.control.lqr import body_frame_error
+from src.control.lqr import LQRTrajectoryTracker
 from src.control.navigation import NavConfig, Navigator, State, boxes_from_model
 from src.estimation.ekf import RobotEKF
 from src.kinematics.differential_drive import DifferentialDrive, wrap_angle
 from src.sensing.lidar_scan import Lidar
+from src.sensing.IMU import IMUSensor
 from src.sensing.wheel_encoder import WheelEncoder
+from src.utils.config import AppConfig, load_config
 
 SCENE = os.path.join(project_root, "assets", "scene_turtlebot3_waffle_pi.xml")
 CTRL_DT = 0.02          # 50 Hz control / estimation rate
 T_MAX = 150.0           # s, timeout per trial
 DOCK_POS_TOL = 0.05     # m, strict docking threshold on the TRUE final position error
 DOCK_YAW_TOL = 0.15     # rad, threshold on the TRUE final heading error
+WALL_MARKERS = {
+    22: ((0.0, -2.9, 0.5), math.pi),
+    44: ((-2.9, 0.0, 0.5), math.pi / 2.0),
+    66: ((2.9, 0.0, 0.5), -math.pi / 2.0),
+    88: ((0.0, 2.9, 0.5), 0.0),
+}
+CAMERA_POSITION_IN_ROBOT = np.array([0.078, 0.0, 0.107])
+# OpenCV camera axes (right, down, forward) expressed in robot axes
+# (forward, left, up).
+ROBOT_FROM_CAMERA = np.array(
+    [[0.0, 0.0, 1.0], [-1.0, 0.0, 0.0], [0.0, -1.0, 0.0]]
+)
+MAX_MARKER_REPROJECTION_ERROR_PX = 2.0
 
 
 def yaw_to_quat(yaw: float) -> np.ndarray:
     return np.array([math.cos(yaw / 2.0), 0.0, 0.0, math.sin(yaw / 2.0)])
+
+
+def wall_marker_rotation(yaw: float) -> np.ndarray:
+    """Map a marker frame (x right, y up, z outward) into world axes."""
+    c, s = math.cos(yaw), math.sin(yaw)
+    return np.array(
+        [[c, -s, 0.0], [s, c, 0.0], [0.0, 0.0, 1.0]]
+    ) @ np.array(
+        [[1.0, 0.0, 0.0], [0.0, 0.0, -1.0], [0.0, 1.0, 0.0]]
+    )
+
+
+def robot_pose_from_wall_marker(camera, marker_id, corners, marker_size_m):
+    """Estimate robot [x, y, yaw] from one known wall marker."""
+    marker = WALL_MARKERS.get(int(marker_id))
+    if marker is None:
+        return None
+    marker_pose = camera.estimate_marker_pose(corners, marker_size_m)
+    if marker_pose.reprojection_error_px > MAX_MARKER_REPROJECTION_ERROR_PX:
+        return None
+    marker_position, marker_yaw = marker
+    marker_rotation = wall_marker_rotation(marker_yaw)
+    camera_position, camera_rotation = camera.camera_pose_from_marker(
+        np.asarray(marker_position), marker_rotation, marker_pose
+    )
+    robot_rotation = camera_rotation @ ROBOT_FROM_CAMERA.T
+    robot_position = camera_position - robot_rotation @ CAMERA_POSITION_IN_ROBOT
+    return np.array(
+        [robot_position[0], robot_position[1],
+         math.atan2(robot_rotation[1, 0], robot_rotation[0, 0])],
+        dtype=float,
+    )
 
 
 def free_start_pose(model, rng, clearance=0.35, max_tries=1000):
@@ -57,6 +107,19 @@ def free_start_pose(model, rng, clearance=0.35, max_tries=1000):
         if nav.grid.clearance[nav.grid.to_index(x, y)] > clearance and not (x > 1.6 and y > 1.5):
             return np.array([x, y, rng.uniform(-math.pi, math.pi)])
     raise RuntimeError("could not find a free start pose")
+
+
+def nav_config_from_app(config: AppConfig, unknown_obstacles: bool = False) -> NavConfig:
+    """Translate validated YAML settings into the navigation configuration."""
+    obstacle = config.obstacle_avoidance
+    nav = NavConfig(
+        v_max=config.lqr.max_linear_velocity,
+        w_max=config.lqr.max_angular_velocity,
+        stop_range=obstacle.stop_distance,
+        slow_range=obstacle.slow_distance,
+        use_prior_obstacles=not unknown_obstacles,
+    )
+    return nav
 
 
 def robot_collisions(model, data) -> int:
@@ -87,8 +150,10 @@ def run_trial(
     viewer=None,
     data: mujoco.MjData | None = None,
     camera: bool = False,
+    aruco_fusion: bool = False,
     camera_dir: str | None = None,
     t_max: float = T_MAX,
+    app_config: AppConfig | None = None,
 ) -> dict:
     """Simulate one docking run and return metrics plus time series.
 
@@ -101,14 +166,27 @@ def run_trial(
     drive = DifferentialDrive.from_model(model)
     lidar = Lidar(model)
     encoder = WheelEncoder(model)
-    cfg = nav_config or NavConfig()
-    cfg.use_prior_obstacles = not unknown_obstacles
-    nav = Navigator(model, CTRL_DT, cfg)
+    imu = IMUSensor(model) if config.ekf.gyro_enabled else None
+    config = app_config or load_config(os.path.join(project_root, "config", "default.yaml"))
+    cfg = nav_config or nav_config_from_app(config, unknown_obstacles)
+    tracker = LQRTrajectoryTracker(
+        CTRL_DT,
+        q_diag=config.lqr.q,
+        r_diag=config.lqr.r,
+        v_max=config.lqr.max_linear_velocity,
+        w_max=config.lqr.max_angular_velocity,
+    )
+    nav = Navigator(model, CTRL_DT, cfg, tracker=tracker)
     cam = None
-    if camera or camera_dir:
+    camera_period_steps = 1
+    if camera or camera_dir or aruco_fusion:
         import cv2
         from src.sensing.cam import RaspiCamera
-        cam = RaspiCamera(model)   # display only: the camera is not an EKF input yet
+        calibration_path = config.camera.calibration_file
+        if calibration_path is not None and not os.path.isabs(calibration_path):
+            calibration_path = os.path.join(project_root, calibration_path)
+        cam = RaspiCamera(model, calibration_path=calibration_path)
+        camera_period_steps = max(1, round(1.0 / (config.camera.detection_rate_hz * CTRL_DT)))
         if camera_dir:
             os.makedirs(camera_dir, exist_ok=True)
 
@@ -120,14 +198,16 @@ def run_trial(
     mujoco.mj_forward(model, data)
 
     # EKF starts from the (possibly perturbed) start pose with a matching P0.
-    sigma_xy, sigma_th = max(init_err, 0.01), max(init_err, 0.01)
     ekf_start = start_pose + rng.normal(0.0, [init_err, init_err, init_err], 3)
+    initial_covariance = np.diag(config.ekf.initial_covariance)
+    if init_err > 0.0:
+        initial_covariance = np.diag([init_err**2, init_err**2, init_err**2])
     ekf = RobotEKF(
         model=None if ekf_wheel_base else model,
         wheel_base=ekf_wheel_base,
-        wheel_distance_std=max(enc_noise, 0.002),
+        wheel_distance_std=max(enc_noise, config.ekf.wheel_distance_std),
         initial_state=ekf_start,
-        initial_covariance=np.diag([sigma_xy**2, sigma_xy**2, sigma_th**2]),
+        initial_covariance=initial_covariance,
     )
     scale_l, scale_r = 1.0 + rng.normal(0.0, odom_scale_err, 2) if odom_scale_err > 0 else (1.0, 1.0)
 
@@ -142,9 +222,32 @@ def run_trial(
         d_l = d_l * scale_l + (rng.normal(0.0, enc_noise) if enc_noise else 0.0)
         d_r = d_r * scale_r + (rng.normal(0.0, enc_noise) if enc_noise else 0.0)
         ranges = lidar.read(data)
+        gyro_z = None if imu is None else float(imu.read(data)[1][2])
 
         # ---- estimation (the ONLY pose the controller sees) -----------------------------
-        pose_est = ekf.update(d_l, d_r, CTRL_DT)
+        pose_est = ekf.update(
+            d_l,
+            d_r,
+            CTRL_DT,
+            imu_gyro_z=gyro_z,
+            imu_rate_std=config.ekf.gyro_rate_std if imu is not None else None,
+        )
+
+        marker_ids = None
+        shown = None
+        if cam is not None and k % camera_period_steps == 0:
+            frame = cam.capture_cv_frame(data)
+            corners, marker_ids, shown = cam.detect_markers(frame)
+            if aruco_fusion and marker_ids is not None:
+                for marker_corners, marker_id in zip(corners, marker_ids.reshape(-1)):
+                    measurement = robot_pose_from_wall_marker(
+                        cam, int(marker_id), marker_corners,
+                        config.camera.wall_marker_size_m,
+                    )
+                    if measurement is not None:
+                        covariance = np.diag(config.ekf.camera_measurement_covariance)
+                        pose_est = ekf.fuse_pose(measurement, covariance)
+                        break
 
         # ---- navigation + LQR -----------------------------------------------------------
         out = nav.update(pose_est, ranges)
@@ -152,10 +255,8 @@ def run_trial(
         data.ctrl[0], data.ctrl[1] = wl, wr
 
         # ---- camera view (display / saved frames only, ~25 Hz) -----------------------------
-        if cam is not None and k % 2 == 0:
-            frame = cam.capture_cv_frame(data)
-            _, ids, shown = cam.detect_markers(frame)
-            cv2.putText(shown, f"t={data.time:.1f}s {out.state} marker={'yes' if ids is not None else 'no'}",
+        if shown is not None:
+            cv2.putText(shown, f"t={data.time:.1f}s {out.state} marker={'yes' if marker_ids is not None else 'no'}",
                         (10, 25), cv2.FONT_HERSHEY_SIMPLEX, 0.6, (0, 255, 255), 2)
             if camera_dir and k % 10 == 0:
                 cv2.imwrite(os.path.join(camera_dir, f"frame_{k:05d}.png"), shown)
@@ -315,13 +416,14 @@ def summarise(all_metrics: list[dict]) -> str:
 
 def main():
     ap = argparse.ArgumentParser(description=__doc__, formatter_class=argparse.RawDescriptionHelpFormatter)
-    ap.add_argument("--trials", type=int, default=1)
-    ap.add_argument("--seed", type=int, default=0)
+    ap.add_argument("--config", type=str, default=os.path.join(project_root, "config", "default.yaml"))
+    ap.add_argument("--trials", type=int, default=None)
+    ap.add_argument("--seed", type=int, default=None)
     ap.add_argument("--fixed-start", action="store_true", help="start at the origin facing +x (default for 1 trial)")
     ap.add_argument("--random-start", action="store_true")
     ap.add_argument("--unknown-obstacles", action="store_true", help="map holds only the walls; boxes are found by LiDAR")
-    ap.add_argument("--enc-noise", type=float, default=0.0, help="std of added noise on wheel distance per step [m]")
-    ap.add_argument("--odom-scale-err", type=float, default=0.0, help="std of per-wheel odometry scale error (e.g. 0.02)")
+    ap.add_argument("--enc-noise", type=float, default=None, help="std of added noise on wheel distance per step [m]")
+    ap.add_argument("--odom-scale-err", type=float, default=None, help="std of per-wheel odometry scale error (e.g. 0.02)")
     ap.add_argument("--init-err", type=float, default=0.0, help="std of EKF initial pose error [m, rad]")
     ap.add_argument("--ekf-wheel-base", type=float, default=None,
                     help="effective wheel base for the EKF [m]; default is the geometric 0.288 m "
@@ -329,19 +431,31 @@ def main():
     ap.add_argument("--plots", type=str, default=None, help="directory for per-trial PNGs")
     ap.add_argument("--viewer", action="store_true")
     ap.add_argument("--camera", action="store_true", help="show the robot camera with ArUco detections (needs a display)")
+    ap.add_argument("--aruco-fusion", action="store_true", help="use wall ArUco poses as EKF corrections")
     ap.add_argument("--save-camera", type=str, default=None, help="save camera frames (every 0.2 s) to this directory")
     args = ap.parse_args()
 
+    config = load_config(args.config)
+    trials = config.evaluation.trial_count if args.trials is None else args.trials
+    seed = config.evaluation.random_seed if args.seed is None else args.seed
+    enc_noise = config.evaluation.encoder_noise_std if args.enc_noise is None else args.enc_noise
+    odom_scale_err = (
+        config.evaluation.odometry_scale_error
+        if args.odom_scale_err is None
+        else args.odom_scale_err
+    )
     model = mujoco.MjModel.from_xml_path(SCENE)
-    random_start = args.random_start or (args.trials > 1 and not args.fixed_start)
-    rng = np.random.default_rng(args.seed)
+    random_start = args.random_start or (trials > 1 and not args.fixed_start)
+    rng = np.random.default_rng(seed)
     results = []
-    for i in range(args.trials):
+    for i in range(trials):
         start = free_start_pose(model, rng) if random_start else np.array([0.0, 0.0, 0.0])
-        kwargs = dict(start_pose=start, seed=args.seed * 1000 + i, enc_noise=args.enc_noise,
-                      odom_scale_err=args.odom_scale_err, init_err=args.init_err,
+        kwargs = dict(start_pose=start, seed=seed * 1000 + i, enc_noise=enc_noise,
+                      odom_scale_err=odom_scale_err, init_err=args.init_err,
                       unknown_obstacles=args.unknown_obstacles, ekf_wheel_base=args.ekf_wheel_base,
-                      camera=args.camera, camera_dir=args.save_camera)
+                      camera=args.camera, camera_dir=args.save_camera,
+                      aruco_fusion=args.aruco_fusion,
+                      t_max=config.evaluation.timeout_s, app_config=config)
         if args.viewer:
             from mujoco import viewer as mj_viewer
             data = mujoco.MjData(model)
@@ -351,7 +465,8 @@ def main():
             res = run_trial(model, **kwargs)
         m = res["metrics"]
         results.append(m)
-        print(f"[{i + 1:3d}/{args.trials}] start=({start[0]:+.2f},{start[1]:+.2f},{math.degrees(start[2]):+4.0f}�) "
+        print(f"[{i + 1:3d}/{trials}] start=({start[0]:+.2f},{start[1]:+.2f},"
+              f"{math.degrees(start[2]):+.0f}deg) "
               f"{'OK  ' if m['completed'] else 'FAIL'} state={m['nav_state']:6s} t={m['time_s']:5.1f}s "
               f"pos_err={m['dock_pos_err_m']:.3f}m yaw_err={math.degrees(m['dock_yaw_err_rad']):.1f}� "
               f"rmse_track={m['track_rmse_pos_true_m']:.3f}m ekf_err={m['ekf_final_pos_err_m']:.3f}m "
