@@ -54,11 +54,11 @@ COARSE_ID = 0
 FINE_ID = 99
 
 # ID 0 must reach this size before ID 99 is considered.
-COARSE_SWITCH_WIDTH = 100.0
+COARSE_SWITCH_WIDTH = 120.0
 
 # ID 99 must be detected reliably before switching.
-FINE_SWITCH_WIDTH = 20.0
-FINE_CONFIRM_FRAMES = 2
+FINE_SWITCH_WIDTH = 60.0
+FINE_CONFIRM_FRAMES = 5
 
 # Final charging conditions.
 FINE_STOP_WIDTH = 125.0
@@ -72,7 +72,7 @@ INITIAL_HEADING = math.pi / 2
 STOP_DISTANCE = 0.20
 CLEAR_DISTANCE = 0.40
 
-AVOID_DISTANCE = 0.55
+AVOID_DISTANCE = 0.8
 AVOID_TURN_RAD = math.radians(35)
 AVOID_TURN_W = 0.50
 AVOID_FORWARD_V = 0.12
