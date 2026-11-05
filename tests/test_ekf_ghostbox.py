@@ -27,6 +27,7 @@ from src.sensing.IMU import IMUSensor
 from src.sensing.cam import RaspiCamera
 from src.sensing.wheel_encoder import WheelEncoder
 
+# Center of the robot base mesh relative to the free-joint origin in the XML.
 BASE_VISUAL_CENTER_OFFSET = np.array([-0.064, 0.0], dtype=float)
 
 
@@ -65,7 +66,12 @@ def add_pose_box(scene, pose, color):
 def main():
     parser = argparse.ArgumentParser()
     parser.add_argument("--imu", action="store_true")
-    parser.add_argument("--scale-error", type=float, default=0.02)
+    parser.add_argument(
+        "--scale-error",
+        type=float,
+        default=0.0,
+        help="relative wheel-scale error to inject for drift testing",
+    )
     parser.add_argument("--seconds", type=float, default=30.0)
     args = parser.parse_args()
     helpers = load_track_helpers()
