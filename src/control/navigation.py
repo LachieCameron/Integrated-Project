@@ -584,10 +584,10 @@ class Navigator:
             self.stuck_clock += self.dt
             if self.stuck_clock > 1.0:
                 self.stuck_clock = 0.0
-                if in_dock_leg:
+                if in_dock_leg and not cfg.visual_docking:
                     self.state = State.FAILED
                     self.history.append("failed: blocked in docking leg, not at the station face")
-                else:
+                elif not in_dock_leg:
                     self._replan(pose_est)
                 return NavOutput(0.0, 0.0, self.state, self.s_ref, ref_pose, e, front, self.replans)
         else:

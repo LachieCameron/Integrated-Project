@@ -252,6 +252,9 @@ def run_trial(
     steps = int(t_max / CTRL_DT)
     out = None
     visible_dock = None
+    visual_command = (0.0, 0.0)
+    visual_control_active = False
+    visual_docked = False
     for k in range(steps):
         # ---- sensing -----------------------------------------------------------------
         d_l, d_r, _, _ = encoder.step(data)
@@ -289,6 +292,29 @@ def run_trial(
                         center_error,
                     )
                     break
+            if visual_docking is not None and not visual_docked:
+                if visible_dock is None:
+                    if visual_docking.straight_approach:
+                        visual_command = visual_docking.command(
+                            None, None, None, float(np.min(ranges[4:9]))
+                        )[:2]
+                        visual_control_active = True
+                    else:
+                        visual_control_active = False
+                        visual_command = (0.0, 0.0)
+                        visual_docking.reset()
+                else:
+                    width, center_error, signed_error = visible_dock
+                    visual_command = visual_docking.command(
+                        width,
+                        center_error,
+                        signed_error,
+                        float(np.min(ranges[4:9])),
+                        pose_est[2],
+                        math.pi / 2.0,
+                    )
+                    visual_command = visual_command[:2]
+                    visual_control_active = True
             if aruco_fusion and marker_ids is not None:
                 for marker_corners, marker_id in zip(corners, marker_ids.reshape(-1)):
                     measurement = robot_pose_from_wall_marker(
@@ -303,22 +329,19 @@ def run_trial(
 
         # ---- navigation + LQR -----------------------------------------------------------
         out = nav.update(pose_est, ranges)
-        if visual_docking is not None and visible_dock is not None:
-            width, center_error, signed_error = visible_dock
-            v_visual, w_visual, docked = visual_docking.command(
-                width,
-                center_error,
-                signed_error,
-                out.front_range,
-                pose_est[2],
-                math.pi / 2.0,
-            )
-            out.v, out.w = v_visual, w_visual
-            if docked:
+        if visual_docking is not None and visual_control_active:
+            out.v, out.w = visual_command
+            if visual_docking.confirm_count >= visual_docking.config.confirm_frames:
+                visual_docked = True
+                visual_control_active = False
+                visual_command = (0.0, 0.0)
+                out.v = out.w = 0.0
                 nav.state = State.DONE
                 out.state = State.DONE
-        elif visual_docking is not None and out.state != State.DONE:
-            visual_docking.reset()
+        elif visual_docked:
+            out.v = out.w = 0.0
+        if k == steps - 1:
+            out.v = out.w = 0.0
         wl, wr = drive.twist_to_wheel_speeds(out.v, out.w)
         data.ctrl[0], data.ctrl[1] = wl, wr
 

@@ -24,8 +24,8 @@ class DockingConfig:
     heading_correction_threshold: float = math.radians(8.0)
     heading_gain: float = 1.2
     min_marker_width_px: float = 100.0
-    hard_stop_distance: float = 0.12
-    complete_distance: float = 0.18
+    hard_stop_distance: float = 0.14
+    complete_distance: float = 0.14
     terminal_speed: float = 0.025
     center_tolerance: float = 0.12
     confirm_frames: int = 3
@@ -39,11 +39,17 @@ class VisualDockingController:
         self.confirm_count = 0
         self._filtered_signed_error = 0.0
         self._aligned = False
+        self._straight_approach = False
 
     def reset(self) -> None:
         self.confirm_count = 0
         self._filtered_signed_error = 0.0
         self._aligned = False
+        self._straight_approach = False
+
+    @property
+    def straight_approach(self) -> bool:
+        return self._straight_approach
 
     def command(
         self,
@@ -60,7 +66,18 @@ class VisualDockingController:
         stops forward motion; callers may provide their own search rotation.
         """
         cfg = self.config
+        if self._straight_approach and not np.isfinite(front_distance):
+            self.confirm_count = 0
+            return 0.0, 0.0, False
         if marker_width_px is None or center_error is None or signed_center_error is None:
+            if self._straight_approach:
+                reached = (
+                    0.0 <= front_distance <= cfg.complete_distance
+                )
+                self.confirm_count = self.confirm_count + 1 if reached else 0
+                if front_distance > cfg.hard_stop_distance:
+                    return cfg.terminal_speed, 0.0, False
+                return 0.0, 0.0, self.confirm_count >= cfg.confirm_frames
             self.confirm_count = 0
             return 0.0, 0.0, False
 
@@ -77,29 +94,41 @@ class VisualDockingController:
         elif not self._aligned and filtered_center_error <= cfg.center_deadband:
             self._aligned = True
 
-        if self._aligned:
-            angular = 0.0
-        else:
-            angular = float(np.clip(
-                -cfg.angular_gain * self._filtered_signed_error,
-                -cfg.max_angular_w,
-                cfg.max_angular_w,
-            ))
+        if (
+            not self._straight_approach
+            and self._aligned
+            and center_error <= cfg.center_before_drive
+            and marker_width_px >= cfg.target_width_px
+        ):
+            self._straight_approach = True
 
-        if center_error > cfg.center_before_drive:
-            linear = 0.0
-        elif marker_width_px < cfg.target_width_px:
-            linear = float(np.clip(
-                cfg.linear_gain * (cfg.target_width_px - marker_width_px)
-                / cfg.target_width_px,
-                0.0,
-                cfg.max_linear_v,
-            ))
+        if self._straight_approach:
+            angular = 0.0
+            linear = cfg.terminal_speed if front_distance > cfg.hard_stop_distance else 0.0
         else:
-            linear = cfg.terminal_speed if front_distance > cfg.complete_distance else 0.0
+            if self._aligned:
+                angular = 0.0
+            else:
+                angular = float(np.clip(
+                    -cfg.angular_gain * self._filtered_signed_error,
+                    -cfg.max_angular_w,
+                    cfg.max_angular_w,
+                ))
+            if center_error > cfg.center_before_drive:
+                linear = 0.0
+            elif marker_width_px < cfg.target_width_px:
+                linear = float(np.clip(
+                    cfg.linear_gain * (cfg.target_width_px - marker_width_px)
+                    / cfg.target_width_px,
+                    0.0,
+                    cfg.max_linear_v,
+                ))
+            else:
+                linear = cfg.terminal_speed
 
         if (
-            not self._aligned
+            not self._straight_approach
+            and not self._aligned
             and filtered_center_error > cfg.center_release
             and heading is not None
             and target_heading is not None
@@ -114,7 +143,7 @@ class VisualDockingController:
             ))
 
         reached = (
-            cfg.hard_stop_distance <= front_distance <= cfg.complete_distance
+            0.0 <= front_distance <= cfg.complete_distance
             and marker_width_px >= cfg.min_marker_width_px
             and filtered_center_error <= cfg.center_tolerance
         )

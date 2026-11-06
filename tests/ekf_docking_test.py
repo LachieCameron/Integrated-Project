@@ -69,8 +69,8 @@ ID99_CENTER_BEFORE_DRIVE = 0.10
 VISUAL_CENTER_DEADBAND = 0.04
 VISUAL_HEADING_CORRECTION_THRESHOLD = math.radians(8.0)
 DOCK_CENTER_TOLERANCE = 0.12
-DOCK_COMPLETE_DISTANCE = 0.18
-DOCK_HARD_STOP = 0.12
+DOCK_COMPLETE_DISTANCE = 0.14
+DOCK_HARD_STOP = 0.14
 DOCK_MIN_MARKER_WIDTH_PX = 100.0
 DOCK_CONFIRM_FRAMES = 3
 PRE_DOCK_POSE = np.array([2.4, 2.15, math.pi / 2.0])
@@ -229,6 +229,7 @@ def main():
     dock_confirm_count = 0
     total_camera_updates = 0
     last_message_mode = None
+    legacy_straight_approach = False
 
     def lidar_distances():
         result = []
@@ -246,6 +247,7 @@ def main():
         nonlocal forward_start, docking_phase, dock_phase, charged, id99_seen_frames
         nonlocal id99_lost_frames, id99_reacquire_frames, last_id99_signed_error
         nonlocal dock_confirm_count, total_camera_updates, last_message_mode
+        nonlocal legacy_straight_approach
 
         # Encoder-based EKF prediction; do not use simulator true pose to navigate.
         d_left, d_right, _, _ = encoder.step(data)
@@ -329,6 +331,7 @@ def main():
                         follower.target_ids = (DOCK_ID,)
                         follower.target_id = DOCK_ID
                         follower.target_width_pixels = DOCK_TARGET_WIDTH_PX
+                        legacy_straight_approach = False
                     follower.state = "TRACKING"
                     print(f"[{data.time:.2f}s] DOCK TAG -> {dock_phase}")
 
@@ -352,7 +355,24 @@ def main():
                         turn_direction = 1 if left >= right else -1
                         desired_v = desired_w = 0.0
                 elif dock_phase == "LEGACY_PIXEL":
-                    if not id99_visible or id99_reacquire_frames < ID99_REACQUIRE_FRAMES:
+                    if legacy_straight_approach:
+                        desired_v = 0.025 if front > DOCK_HARD_STOP else 0.0
+                        desired_w = 0.0
+                        dock_confirm_count = (
+                            dock_confirm_count + 1
+                            if front <= DOCK_COMPLETE_DISTANCE
+                            else 0
+                        )
+                        if dock_confirm_count >= DOCK_CONFIRM_FRAMES:
+                            charged = True
+                            mode = "CHARGED"
+                            follower.state = "CHARGED"
+                            desired_v = desired_w = 0.0
+                            print(
+                                f"[{data.time:.2f}s] LEGACY PIXEL DOCK COMPLETE; "
+                                "motors stopped"
+                            )
+                    elif not id99_visible or id99_reacquire_frames < ID99_REACQUIRE_FRAMES:
                         desired_v = 0.0
                         if id99_lost_frames <= ID99_LOST_FRAMES:
                             desired_w = 0.0
@@ -378,6 +398,12 @@ def main():
                             ))
                         else:
                             desired_v = 0.0
+                        if (
+                            width >= DOCK_TARGET_WIDTH_PX
+                            and center_error <= DOCK_CENTER_TOLERANCE
+                        ):
+                            legacy_straight_approach = True
+                            desired_v = 0.025 if front > DOCK_HARD_STOP else 0.0
 
                         reached = (
                             DOCK_HARD_STOP <= front <= DOCK_COMPLETE_DISTANCE
@@ -420,14 +446,20 @@ def main():
                         turn_start_heading = heading
                         turn_direction = 1 if left >= right else -1
                         desired_v = desired_w = 0.0
-                elif dock_phase == "VISUAL_APPROACH" and not id99_visible:
-                    visual_docking.reset()
-                    dock_confirm_count = 0
-                    desired_v = 0.0
-                    desired_w = (
-                        -ID99_SEARCH_W if last_id99_signed_error > 0.05
-                        else ID99_SEARCH_W
-                    )
+                elif dock_phase == "VISUAL_APPROACH" and id99_visible:
+                    if visual_docking.straight_approach:
+                        desired_v, desired_w, docked = visual_docking.command(
+                            None, None, None, front
+                        )
+                        dock_confirm_count = visual_docking.confirm_count
+                    else:
+                        visual_docking.reset()
+                        dock_confirm_count = 0
+                        desired_v = 0.0
+                        desired_w = (
+                            -ID99_SEARCH_W if last_id99_signed_error > 0.05
+                            else ID99_SEARCH_W
+                        )
                 elif dock_phase == "VISUAL_APPROACH" and id99_visible:
                     width, center_error, signed_error = visible[DOCK_ID]
                     desired_v, desired_w, docked = visual_docking.command(
