@@ -472,10 +472,10 @@ The selected Q and R values should provide an appropriate balance between tracki
 
 | Configuration | Q Diagonal | R Diagonal | Position RMSE (m) | Settling Time (s) |
 |---|---|---|---|---|
-| Configured controller | (1.0, 1.0, 0.5) | (0.1, 0.1) | Not recorded | Not recorded |
-
-No comparative Q/R sweep results are recorded in this repository; the table
-documents the configured values rather than claiming measured performance.
+| Baseline | (1, 1, 0.5) | (0.1, 0.1) | TBD | TBD |
+| Higher heading penalty | TBD | TBD | TBD | TBD |
+| Higher control penalty | TBD | TBD | TBD | TBD |
+| Selected configuration | TBD | TBD | TBD | TBD |
 
 ### 7.6 Final Visual Docking
 
