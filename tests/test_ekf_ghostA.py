@@ -88,12 +88,14 @@ def main():
                 if ids is not None:
                     for marker_corners, marker_id in zip(corners, ids.reshape(-1)):
                         measurement = helpers.robot_pose_from_wall_marker(
-                            camera, int(marker_id), marker_corners, 0.4
+                            camera, int(marker_id), marker_corners,
+                            helpers.marker_size_for(int(marker_id)),
                         )
                         if measurement is not None:
                             covariance = np.diag([0.02, 0.02, 0.05])
                             pose = ekf.fuse_pose(measurement, covariance)
-                            accepted += 1
+                            if ekf.last_accepted:
+                                accepted += 1
                             break
 
             true_pose = np.array(

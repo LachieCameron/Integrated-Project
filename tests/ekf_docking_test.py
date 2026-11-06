@@ -85,7 +85,8 @@ def correct_from_camera(ekf, camera, helpers, corners, ids):
     for marker_corners, marker_id in zip(corners, np.asarray(ids).reshape(-1)):
         try:
             measurement = helpers.robot_pose_from_wall_marker(
-                camera, int(marker_id), marker_corners, 0.4
+                camera, int(marker_id), marker_corners,
+                helpers.marker_size_for(int(marker_id)),
             )
             if measurement is None:
                 continue

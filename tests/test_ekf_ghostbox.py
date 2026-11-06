@@ -114,7 +114,8 @@ def main():
                 if ids is not None:
                     for marker_corners, marker_id in zip(corners, ids.reshape(-1)):
                         measurement = helpers.robot_pose_from_wall_marker(
-                            camera, int(marker_id), marker_corners, 0.4
+                            camera, int(marker_id), marker_corners,
+                            helpers.marker_size_for(int(marker_id)),
                         )
                         if measurement is not None:
                             fused.fuse_pose(

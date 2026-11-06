@@ -55,6 +55,7 @@ def test_pose_fusion_is_owned_by_ekf():
     )
 
     corrected = ekf.fuse_pose(np.zeros(3), np.eye(3) * 0.01)
+    assert ekf.last_accepted
 
     assert corrected[0] < 1.0
 
@@ -71,6 +72,7 @@ def test_absolute_pose_correction_reduces_drifted_state():
         np.array([0.0, 0.0, 0.0]),
         np.eye(3) * 0.01,
     )
+    assert ekf.last_accepted
 
     assert np.linalg.norm(corrected) < np.linalg.norm(before)
     assert np.all(np.diag(ekf.P) < 0.1)
