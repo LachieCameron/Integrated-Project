@@ -243,15 +243,241 @@ The camera correction uses a chi-square innovation gate with a threshold of 11.3
 - EKF design and parameter table (Q, R, P0) with justification: TODO
 - Tuning, consistency checks and reported performance: TODO
 
+
+
 ## 7. Control (Part D)
 
 - Controller design (state feedback or LQR), gain or weight selection with justification: TODO
 - Tracking results: TODO
 
+### 7.1 Controller Architecture
+
+The project uses a hybrid control system consisting of ArUco marker following, LQR-based navigation and visual docking.
+
+| Control Stage | Controller | Function |
+|---|---|---|
+| Initial navigation | `TagFollower` | Track coarse ArUco marker ID 0 |
+| Obstacle avoidance | LiDAR-based navigation | Avoid obstacles during movement |
+| Pre-docking | LQR trajectory tracking | Navigate to the pre-docking pose |
+| Fine docking | Visual proportional control | Align with ArUco marker ID 99 |
+| Docking completion | Stop command | Stop wheel motion when docking is completed |
+
+The LQR controller operates during the `PRE_DOCK` stage and uses the EKF-estimated robot pose as feedback.
+
+### 7.2 LQR Controller Design
+
+The Linear Quadratic Regulator (LQR) minimises tracking error while penalising excessive control corrections.
+
+The linearised tracking-error system is:
+
+$$
+\mathbf{e}_{k+1}
+=
+A_d\mathbf{e}_k+B_d\Delta\mathbf{u}_k
+$$
+
+The LQR objective function is:
+
+$$
+J=
+\sum_{k=0}^{\infty}
+\left(
+\mathbf{e}_k^TQ\mathbf{e}_k+
+\Delta\mathbf{u}_k^TR\Delta\mathbf{u}_k
+\right)
+$$
+
+Where:
+
+- $\mathbf{e}$: Robot tracking error.
+- $Q$: State tracking-error weighting matrix.
+- $R$: Control-effort weighting matrix.
+- $\Delta\mathbf{u}$: Control correction.
+
+The optimal feedback gain is obtained by solving the discrete algebraic Riccati equation.
+
+The controller applies a state-feedback correction using the estimated pose and reference trajectory.
+
+The generated linear and angular velocities are converted into left and right wheel angular velocities.
+
+### 7.3 LQR Parameters and Weight Selection
+
+The configured baseline weights are:
+
+$$
+Q=\operatorname{diag}(1.0,\ 1.0,\ 0.5)
+$$
+
+$$
+R=\operatorname{diag}(0.1,\ 0.1)
+$$
+
+The weighting matrices represent the relative importance of tracking accuracy and control effort.
+
+| Weight | Function |
+|---|---|
+| $Q_{11}$ | Penalises longitudinal tracking error |
+| $Q_{22}$ | Penalises lateral tracking error |
+| $Q_{33}$ | Penalises heading error |
+| $R_{11}$ | Penalises linear velocity correction |
+| $R_{22}$ | Penalises angular velocity correction |
+
+Increasing a state-error weight generally encourages stronger correction of that error, while increasing a control-effort weight discourages aggressive control corrections.
+
+The pre-docking controller limits the commanded velocities to:
+
+| Parameter | Maximum |
+|---|---|
+| Linear velocity | 0.10 m/s |
+| Angular velocity | 0.45 rad/s |
+
+These limits help prevent excessively aggressive movements during docking.
+
+### 7.4 LQR Tuning Method
+
+To justify the selected LQR parameters, different Q and R configurations should be tested under identical initial conditions.
+
+The main performance metrics are:
+
+1. Position tracking RMSE.
+2. Heading tracking error.
+3. Settling time.
+4. Control effort.
+5. Pre-docking success rate.
+
+Control effort can be evaluated using:
+
+$$
+J_u=
+\sum_{k=1}^{N}
+\left(
+v_k^2+\omega_k^2
+\right)\Delta t
+$$
+
+For a dimensionally consistent comparison, the linear and angular terms should be normalised or weighted before being combined.
+
+The selected Q and R values should provide an appropriate balance between tracking accuracy, settling time and control activity.
+
+### 7.5 LQR Tracking Results
+
+**[RESULT REQUIRED]**
+
+| Configuration | Q Diagonal | R Diagonal | Position RMSE (m) | Settling Time (s) |
+|---|---|---|---|---|
+| Baseline | (1, 1, 0.5) | (0.1, 0.1) | TBD | TBD |
+| Higher heading penalty | TBD | TBD | TBD | TBD |
+| Higher control penalty | TBD | TBD | TBD | TBD |
+| Selected configuration | TBD | TBD | TBD | TBD |
+
+The following graphs should be included:
+
+- Position tracking error versus time.
+- Heading tracking error versus time.
+- Linear and angular velocity commands versus time.
+- Actual robot trajectory compared with the reference trajectory.
+
+The results should demonstrate whether the LQR controller achieves accurate and stable pre-docking navigation.
+
+### 7.6 Final Visual Docking
+
+After the robot reaches the pre-docking pose, control switches from LQR to visual docking.
+
+The pre-docking target is:
+
+$$
+\mathbf{x}_{dock}=
+\begin{bmatrix}
+2.4\\
+2.15\\
+\pi/2
+\end{bmatrix}
+$$
+
+The transition conditions are:
+
+- Position error no greater than 0.10 m.
+- Heading error no greater than 8°.
+
+During visual docking, the robot will follow ArUco marker ID 99 to estimate proximity using the detected marker width. 
+
+The visual controller adjusts linear and angular velocities to align the robot with the charging station.
+
+When the configured docking-completion conditions are met, the robot stops and enters the simulated `CHARGED` state.
+
+For final-docking state, the LQR not implemented instead the robot uses visual feedback with LiDAR logic.
+
 ## 8. Integration and robustness (Part E)
 
 - Obstacle avoidance approach: TODO
 - Results over repeated trials with varied conditions, and failure diagnosis: TODO
+
+### 8.1 Obstacle Avoidance
+
+LiDAR are provided with configuration between -90° and 90° with 15° gap in between.
+
+**Obstacle avoidance parameters:**
+
+| Parameter | Value |
+|---|---|
+| Stop distance | 0.20 m |
+| Clearance threshold | 0.40 m |
+| Avoidance distance | 0.50 m |
+| Avoidance turn angle | 35° |
+| Avoidance forward velocity | 0.15 m/s |
+| Avoidance angular velocity | 0.45 rad/s |
+
+**Avoidance sequence:**
+
+1. **Obstacle Detection:** When an obstacle is detected within the clearance threshold during forward movement, the robot enters `AVOID_TURN`.
+2. **Direction Selection:** The robot compares left and right LiDAR clearance and selects the direction with greater available space.
+3. **Turning:** The robot rotates approximately 35° to avoid the obstacle.
+4. **Forward Movement:** After turning, the robot enters `AVOID_FORWARD` and travels approximately 0.50 m.
+5. **Obstacle Rechecking:** If another obstacle is detected within the stop distance, the robot returns to `AVOID_TURN`.
+6. **Navigation Resumption:** Once the avoidance movement is completed, the robot returns to normal navigation.
+
+During the `PRE_DOCK` stage, LiDAR readings are supplied directly to the `Navigator` subsystem, which handles navigation and obstacle-related decisions.
+
+**Integration Testing**
+
+Integration testing evaluates whether the sensing, estimation, navigation, and docking subsystems operate together correctly.
+
+The following tests should be performed:
+
+| Test | Objective | Expected Behaviour |
+|---|---|---|
+| Sensor integration | Verify encoder, camera and LiDAR measurements | Sensors provide valid data |
+| EKF integration | Verify odometry prediction and camera correction | Robot pose estimate updates correctly |
+| LQR integration | Verify EKF-based pre-docking navigation | Robot approaches the reference pose |
+| Obstacle avoidance | Place obstacles along the navigation path | Robot detects and avoids obstacles |
+| Marker switching | Test transitions from ID 0 to ID 99 | Robot enters the appropriate docking stage |
+| Docking completion | Approach the charging station | Robot stops when docking conditions are satisfied |
+
+These tests assess the interaction between subsystems rather than evaluating each component independently.
+
+### 8.2 Robustness Testing Under Varied Conditions
+
+To evaluate system reliability, the robot were tested in different environment condition where obstacle's position were randomly changed.
+
+The simulation supports randomised obstacle placement using:
+
+```bash
+python3 tests/ekf_docking_test.py --random-scene --scene-seed 92 --obstacle-count 3
+```
+
+Different scene seeds and obstacle counts can be used to evaluate the system under varied conditions.
+
+**Recommended experiments:**
+
+| Experiment | Test Condition | Evaluation Metric |
+|---|---|---|
+| Baseline | Fixed starting pose and obstacle layout | Docking success and completion time |
+| Random obstacles | Different obstacle positions | Success rate and collision count |
+| Initial pose variation | Different robot starting positions | Navigation success and tracking error |
+| Sensor noise | Increased encoder or camera noise | EKF estimation accuracy |
+| LQR tuning | Different Q and R values | Tracking error and settling time |
+
+Each configuration should be tested over multiple trials to evaluate repeatability.
 
 ## 9. Limitations and extensions
 
