@@ -16,7 +16,6 @@ Autonomous Docking TurtleBot3 Project where demonstrated using MuJoCo simulation
 The system initially detects ArUco marker ID 0 and uses marker ID 99 for fine docking alignment. The EKF estimates the robot's position and orientation, while LQR-based navigation controls its approach toward the pre-docking location.
 
 ## 2. Install and run
-
 See [SETUP.md](SETUP.md) for the environment setup on Mac and Windows.
 
 TODO: add the exact commands to run the project once the code exists. The marking guide requires that the code runs from a fresh environment as described here.
@@ -327,18 +326,6 @@ The controller applies a state-feedback correction using the estimated pose and 
 The generated linear and angular velocities are converted into left and right wheel angular velocities.
 
 ### 7.3 LQR Parameters and Weight Selection
-
-The configured baseline weights are:
-
-$$
-Q=\operatorname{diag}(1.0,\ 1.0,\ 0.5)
-$$
-
-$$
-R=\operatorname{diag}(0.1,\ 0.1)
-$$
-
-The weighting matrices represent the relative importance of tracking accuracy and control effort.
 
 | Weight | Function |
 |---|---|
