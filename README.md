@@ -34,7 +34,9 @@ TODO: block diagram (simulator, sensors, EKF, LQR, back to simulator).
 - Controllability and observability analysis: TODO. Include which states are observable from which sensors, and what happens when the marker leaves the camera view.
 
 ### 4.1 State, input and equations
-** State Vector:**
+
+**State Vector:**
+
 $$
 \mathbf{x} =
 \begin{bmatrix}
@@ -45,6 +47,7 @@ y \\
 $$
 
 **Control Vector:**
+
 $$
 \mathbf{u} =
 \begin{bmatrix}
