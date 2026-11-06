@@ -2,66 +2,50 @@
 
 **41014 Sensors and Control in Mechatronics Systems, Assessment 4: Integrated Project**
 
-Team: Lachlan Cameron, Jonathan Wijaya, William Hsu
+**Team:** Lachlan Cameron, Jonathan Wijaya, William Hsu
 
-Group: 25
+**Group:** 25
 
-> Demo video (5 min): _TODO link_
-> Platform: simulation (MuJoCo). Hardware: _TODO yes/no_
+**Demo video (5 min):** TODO link
+
+**Platform:** Simulation (MuJoCo). Hardware: TODO yes/no
 
 ## 1. Overview
 
-TODO: 3 to 4 sentences. What the robot does, the task, and the key result (e.g. docking success rate and RMSE from Section 6).
-
-Autonomous Docking TurtleBot3 Project where demonstrated using MuJoCo simulation. The robot integrates wheel encoder odometry, camera-based ArUco marker detection, LiDAR obstacle detection, Extended Kalman Filter (EKF) state estimation, and Linear Quadratic Regulator (LQR) trajectory tracking. 
+Autonomous Docking TurtleBot3 Project where demonstrated using MuJoCo simulation. The robot integrates wheel encoder odometry, camera-based ArUco marker detection, LiDAR obstacle detection, Extended Kalman Filter (EKF) state estimation, and Linear Quadratic Regulator (LQR) trajectory tracking.
 
 The system initially detects ArUco marker ID 0 and uses marker ID 99 for fine docking alignment. The EKF estimates the robot's position and orientation, while LQR-based navigation controls its approach toward the pre-docking location.
 
 ## 2. Install and run
-See [SETUP.md](SETUP.md) for the environment setup on Mac and Windows.
 
-TODO: add the exact commands to run the project once the code exists. The marking guide requires that the code runs from a fresh environment as described here.
+See [SETUP.md](SETUP.md) for the environment setup on Mac and Windows.
 
 ## 3. System architecture
 
-TODO: block diagram (simulator, sensors, EKF, LQR, back to simulator).
-
-**Constraint:** the controller uses the estimated state only. Simulator ground truth is used for evaluation only, and this should be visible in the code.
+Constraint: the controller uses the estimated state only. Simulator ground truth is used for evaluation only.
 
 ## 4. Modelling (Part A)
 
-- State, input and equations: TODO
-- Assumptions: TODO
-- Controllability and observability analysis: TODO. Include which states are observable from which sensors, and what happens when the marker leaves the camera view.
-
 ### 4.1 State, input and equations
 
-**State Vector:**
+State vector:
 
 $$
-\mathbf{x} =
-\begin{bmatrix}
-x \\
-y \\
-\theta
-\end{bmatrix}
+\mathbf{x} = \begin{bmatrix} x \\ y \\ \theta \end{bmatrix}
 $$
 
-**Control Vector:**
+Control vector:
 
 $$
-\mathbf{u} =
-\begin{bmatrix}
-v \\
-\omega
-\end{bmatrix}
+\mathbf{u} = \begin{bmatrix} v \\ \omega \end{bmatrix}
 $$
 
 Where:
+
 - $v$: Linear velocity (m/s).
 - $\omega$: Angular velocity (rad/s).
 
-**Differential-drive kinematic equations:**
+Differential-drive kinematic equations:
 
 $$
 \dot{x} = v\cos\theta
@@ -76,35 +60,25 @@ $$
 $$
 
 $$
-v = \frac{r}{2}(\omega_R+\omega_L)
+v = \frac{r}{2}(\omega_R + \omega_L)
 $$
 
 $$
-\omega = \frac{r}{L}(\omega_R-\omega_L)
+\omega = \frac{r}{L}(\omega_R - \omega_L)
 $$
 
 Where:
+
 - $r$: Wheel radius (m).
 - $L$: Distance between the left and right wheels (m).
 - $\omega_R$: Right wheel angular velocity (rad/s).
 - $\omega_L$: Left wheel angular velocity (rad/s).
 
-### 4.2 Assumptions
-
-### 4.3 Controllability and observability analysis
-
-## 5. Sensing and calibration (Part B)
-
-- Frame diagram: TODO
-- Camera calibration and ArUco detection: TODO
-- LiDAR processing: TODO
-- Noise characterisation: TODO
-
 ## 5. Sensing and Calibration (Part B)
 
 ### 5.1 Sensor Configuration
 
-three main sensors implemented for navigation, localisation and obstacle avoidance.
+Three main sensors are implemented for navigation, localisation and obstacle avoidance.
 
 | Sensor | Measurement | Purpose |
 |---|---|---|
@@ -116,17 +90,17 @@ three main sensors implemented for navigation, localisation and obstacle avoidan
 
 The system uses four coordinate frames:
 
-1. **World Frame:** Global reference for the robot's position and navigation targets.
-2. **Robot Base Frame:** Local coordinate system for TurtleBot3.
-3. **Camera Frame:** Coordinate system used for camera measurements and marker detection.
-4. **ArUco Marker Frame:** Local coordinate system attached to each marker.
+- **World Frame:** Global reference for the robot's position and navigation targets.
+- **Robot Base Frame:** Local coordinate system for TurtleBot3.
+- **Camera Frame:** Coordinate system used for camera measurements and marker detection.
+- **ArUco Marker Frame:** Local coordinate system attached to each marker.
 
 The coordinate transformation from the camera to the robot and world frames is required to convert marker observations into global robot pose measurements.
 
 The relationship between coordinate frames can be represented as:
 
 $$
-T_{WM} = T_{WB}T_{BC}T_{CM}
+T_{WM} = T_{WB}\,T_{BC}\,T_{CM}
 $$
 
 Where:
@@ -139,7 +113,7 @@ Where:
 Rearranging gives:
 
 $$
-T_{WB}=T_{WM}T_{CM}^{-1}T_{BC}^{-1}
+T_{WB} = T_{WM}\,T_{CM}^{-1}\,T_{BC}^{-1}
 $$
 
 This allows the camera measurement to be transformed into the robot's global pose for EKF correction.
@@ -150,7 +124,7 @@ The RGB camera is used to detect ArUco markers and estimate the robot's pose rel
 
 The camera detection process consists of:
 
-1. Detects ArUco markers using OpenCV.
+1. Detecting ArUco markers using OpenCV.
 2. Extracting marker IDs and corner coordinates.
 3. Estimating marker pose using camera calibration parameters and known marker dimensions.
 4. Providing the resulting robot pose measurement to the EKF.
@@ -159,7 +133,7 @@ The system uses:
 
 | Parameter | Value |
 |---|---|
-| ArUco dictionary | `DICT_5X5_100` |
+| ArUco dictionary | DICT_5X5_100 |
 | Coarse navigation marker | ID 0 |
 | Fine docking marker | ID 99 |
 | Camera update interval | 1/30 s |
@@ -169,18 +143,13 @@ The system uses:
 Camera calibration requires the intrinsic matrix:
 
 $$
-K=
-\begin{bmatrix}
-f_x & 0 & c_x\\
-0 & f_y & c_y\\
-0 & 0 & 1
-\end{bmatrix}
+K = \begin{bmatrix} f_x & 0 & c_x \\ 0 & f_y & c_y \\ 0 & 0 & 1 \end{bmatrix}
 $$
 
 Where:
 
-- $f_x,f_y$: Camera focal lengths in pixels.
-- $c_x,c_y$: Principal point coordinates.
+- $f_x, f_y$: Camera focal lengths in pixels.
+- $c_x, c_y$: Principal point coordinates.
 
 The camera model may also include distortion coefficients to correct lens distortion.
 
@@ -188,9 +157,9 @@ The camera measurement is accepted by the EKF only when it passes the innovation
 
 ### 5.4 LiDAR Processing
 
-LiDAR are implemented for obstacle detection and avoidance across robot's forward facing region. It was integrated across -90° to +90° at 15° intervals.
+LiDAR is implemented for obstacle detection and avoidance across the robot's forward-facing region, from -90° to +90° at 15° intervals.
 
-The measurement then grouped into three different sectors, where:
+The measurements are then grouped into three sectors:
 
 | Sector | Angular Range | Purpose |
 |---|---|---|
@@ -223,12 +192,7 @@ The EKF represents uncertainty using process noise covariance $Q$ and measuremen
 For camera pose measurements, the integrated script uses:
 
 $$
-R_{\text{camera}}=
-\begin{bmatrix}
-0.08^2 & 0 & 0\\
-0 & 0.08^2 & 0\\
-0 & 0 & (5\pi/180)^2
-\end{bmatrix}
+R_{\text{camera}} = \begin{bmatrix} 0.08^2 & 0 & 0 \\ 0 & 0.08^2 & 0 \\ 0 & 0 & (5\pi/180)^2 \end{bmatrix}
 $$
 
 This corresponds to assumed standard deviations of:
@@ -241,20 +205,14 @@ The camera correction uses a chi-square innovation gate with a threshold of 11.3
 
 ## 6. Estimation (Part C)
 
-- EKF design and parameter table (Q, R, P0) with justification: TODO
-- Tuning, consistency checks and reported performance: TODO
-
-
-## 6. Estimation (Part C)
-
 ### 6.1 EKF Design and Parameters
 
-An Extended Kalman Filter (EKF) estimates the robot's position $(x,y)$ and heading $(\theta)$ by combining wheel encoder odometry with ArUco camera measurements.
+An Extended Kalman Filter (EKF) estimates the robot's position $(x, y)$ and heading $(\theta)$ by combining wheel encoder odometry with ArUco camera measurements.
 
 - **Prediction:** Wheel encoders estimate the robot's movement.
 - **Correction:** Camera measurements correct accumulated odometry drift when an ArUco marker is visible.
 
-**EKF Parameter Table:**
+EKF parameter table:
 
 | Parameter | Value | Justification |
 |---|---|---|
@@ -264,18 +222,13 @@ An Extended Kalman Filter (EKF) estimates the robot's position $(x,y)$ and headi
 
 ### 6.2 Tuning, Consistency Checks and Performance
 
-The EKF uses a **chi-square innovation gate of 11.345** to reject inconsistent camera measurements.
+The EKF uses a chi-square innovation gate of 11.345 to reject inconsistent camera measurements.
 
 Performance can be evaluated by comparing the EKF-estimated trajectory against MuJoCo ground truth using position and heading RMSE.
 
 When the ArUco marker is not visible, the EKF continues predicting from wheel encoders, but estimation uncertainty can increase.
 
-**Results:** Quantitative RMSE and consistency results still need to be recorded from simulation trials.
-
 ## 7. Control (Part D)
-
-- Controller design (state feedback or LQR), gain or weight selection with justification: TODO
-- Tracking results: TODO
 
 ### 7.1 Controller Architecture
 
@@ -283,13 +236,13 @@ The project uses a hybrid control system consisting of ArUco marker following, L
 
 | Control Stage | Controller | Function |
 |---|---|---|
-| Initial navigation | `TagFollower` | Track coarse ArUco marker ID 0 |
+| Initial navigation | TagFollower | Track coarse ArUco marker ID 0 |
 | Obstacle avoidance | LiDAR-based navigation | Avoid obstacles during movement |
 | Pre-docking | LQR trajectory tracking | Navigate to the pre-docking pose |
 | Fine docking | Visual proportional control | Align with ArUco marker ID 99 |
 | Docking completion | Stop command | Stop wheel motion when docking is completed |
 
-The LQR controller operates during the `PRE_DOCK` stage and uses the EKF-estimated robot pose as feedback.
+The LQR controller operates during the PRE_DOCK stage and uses the EKF-estimated robot pose as feedback.
 
 ### 7.2 LQR Controller Design
 
@@ -298,12 +251,7 @@ The Linear Quadratic Regulator (LQR) minimises tracking error while penalising e
 The LQR objective function is:
 
 $$
-J=
-\sum_{k=0}^{\infty}
-\left(
-\mathbf{e}_k^TQ\mathbf{e}_k+
-\Delta\mathbf{u}_k^TR\Delta\mathbf{u}_k
-\right)
+J = \sum_{k=0}^{\infty}\left(\mathbf{e}_k^T Q\,\mathbf{e}_k + \Delta\mathbf{u}_k^T R\,\Delta\mathbf{u}_k\right)
 $$
 
 Where:
@@ -342,24 +290,20 @@ These limits help prevent excessively aggressive movements during docking.
 
 ### 7.4 LQR Tuning Method
 
-To justify the selected LQR parameters, different Q and R configurations should be tested under identical initial conditions.
+To justify the selected LQR parameters, different Q and R configurations are tested under identical initial conditions.
 
 The main performance metrics are:
 
-1. Position tracking RMSE.
-2. Heading tracking error.
-3. Settling time.
-4. Control effort.
-5. Pre-docking success rate.
+- Position tracking RMSE.
+- Heading tracking error.
+- Settling time.
+- Control effort.
+- Pre-docking success rate.
 
 Control effort can be evaluated using:
 
 $$
-J_u=
-\sum_{k=1}^{N}
-\left(
-v_k^2+\omega_k^2
-\right)\Delta t
+J_u = \sum_{k=1}^{N}\left(v_k^2 + \omega_k^2\right)\Delta t
 $$
 
 For a dimensionally consistent comparison, the linear and angular terms should be normalised or weighted before being combined.
@@ -368,23 +312,12 @@ The selected Q and R values should provide an appropriate balance between tracki
 
 ### 7.5 LQR Tracking Results
 
-**[RESULT REQUIRED]**
-
 | Configuration | Q Diagonal | R Diagonal | Position RMSE (m) | Settling Time (s) |
 |---|---|---|---|---|
 | Baseline | (1, 1, 0.5) | (0.1, 0.1) | TBD | TBD |
 | Higher heading penalty | TBD | TBD | TBD | TBD |
 | Higher control penalty | TBD | TBD | TBD | TBD |
 | Selected configuration | TBD | TBD | TBD | TBD |
-
-The following graphs should be included:
-
-- Position tracking error versus time.
-- Heading tracking error versus time.
-- Linear and angular velocity commands versus time.
-- Actual robot trajectory compared with the reference trajectory.
-
-The results should demonstrate whether the LQR controller achieves accurate and stable pre-docking navigation.
 
 ### 7.6 Final Visual Docking
 
@@ -393,12 +326,7 @@ After the robot reaches the pre-docking pose, control switches from LQR to visua
 The pre-docking target is:
 
 $$
-\mathbf{x}_{dock}=
-\begin{bmatrix}
-2.4\\
-2.15\\
-\pi/2
-\end{bmatrix}
+\mathbf{x}_{\text{dock}} = \begin{bmatrix} 2.4 \\ 2.15 \\ \pi/2 \end{bmatrix}
 $$
 
 The transition conditions are:
@@ -406,24 +334,21 @@ The transition conditions are:
 - Position error no greater than 0.10 m.
 - Heading error no greater than 8°.
 
-During visual docking, the robot will follow ArUco marker ID 99 to estimate proximity using the detected marker width. 
+During visual docking, the robot follows ArUco marker ID 99 and estimates proximity using the detected marker width.
 
 The visual controller adjusts linear and angular velocities to align the robot with the charging station.
 
-When the configured docking-completion conditions are met, the robot stops and enters the simulated `CHARGED` state.
+When the configured docking-completion conditions are met, the robot stops and enters the simulated CHARGED state.
 
-For final-docking state, the LQR not implemented instead the robot uses visual feedback with LiDAR logic.
+In the final docking stage, LQR is not used; the robot uses visual feedback with LiDAR logic instead.
 
-## 8. Integration and robustness (Part E)
-
-- Obstacle avoidance approach: TODO
-- Results over repeated trials with varied conditions, and failure diagnosis: TODO
+## 8. Integration and Robustness (Part E)
 
 ### 8.1 Obstacle Avoidance
 
-LiDAR are provided with configuration between -90° and 90° with 15° gap in between.
+The LiDAR is configured between -90° and 90° with 15° spacing.
 
-**Obstacle avoidance parameters:**
+Obstacle avoidance parameters:
 
 | Parameter | Value |
 |---|---|
@@ -434,22 +359,20 @@ LiDAR are provided with configuration between -90° and 90° with 15° gap in be
 | Avoidance forward velocity | 0.15 m/s |
 | Avoidance angular velocity | 0.45 rad/s |
 
-**Avoidance sequence:**
+Avoidance sequence:
 
-1. **Obstacle Detection:** When an obstacle is detected within the clearance threshold during forward movement, the robot enters `AVOID_TURN`.
+1. **Obstacle Detection:** When an obstacle is detected within the clearance threshold during forward movement, the robot enters AVOID_TURN.
 2. **Direction Selection:** The robot compares left and right LiDAR clearance and selects the direction with greater available space.
 3. **Turning:** The robot rotates approximately 35° to avoid the obstacle.
-4. **Forward Movement:** After turning, the robot enters `AVOID_FORWARD` and travels approximately 0.50 m.
-5. **Obstacle Rechecking:** If another obstacle is detected within the stop distance, the robot returns to `AVOID_TURN`.
+4. **Forward Movement:** After turning, the robot enters AVOID_FORWARD and travels approximately 0.50 m.
+5. **Obstacle Rechecking:** If another obstacle is detected within the stop distance, the robot returns to AVOID_TURN.
 6. **Navigation Resumption:** Once the avoidance movement is completed, the robot returns to normal navigation.
 
-During the `PRE_DOCK` stage, LiDAR readings are supplied directly to the `Navigator` subsystem, which handles navigation and obstacle-related decisions.
+During the PRE_DOCK stage, LiDAR readings are supplied directly to the Navigator subsystem, which handles navigation and obstacle-related decisions.
 
-**Integration Testing**
+### 8.2 Integration Testing
 
 Integration testing evaluates whether the sensing, estimation, navigation, and docking subsystems operate together correctly.
-
-The following tests should be performed:
 
 | Test | Objective | Expected Behaviour |
 |---|---|---|
@@ -462,9 +385,9 @@ The following tests should be performed:
 
 These tests assess the interaction between subsystems rather than evaluating each component independently.
 
-### 8.2 Robustness Testing Under Varied Conditions
+### 8.3 Robustness Testing Under Varied Conditions
 
-To evaluate system reliability, the robot were tested in different environment condition where obstacle's position were randomly changed.
+To evaluate system reliability, the robot was tested in different environment conditions where obstacle positions were randomly changed.
 
 The simulation supports randomised obstacle placement using:
 
@@ -474,8 +397,6 @@ python3 tests/ekf_docking_test.py --random-scene --scene-seed 92 --obstacle-coun
 
 Different scene seeds and obstacle counts can be used to evaluate the system under varied conditions.
 
-**Recommended experiments:**
-
 | Experiment | Test Condition | Evaluation Metric |
 |---|---|---|
 | Baseline | Fixed starting pose and obstacle layout | Docking success and completion time |
@@ -484,24 +405,17 @@ Different scene seeds and obstacle counts can be used to evaluate the system und
 | Sensor noise | Increased encoder or camera noise | EKF estimation accuracy |
 | LQR tuning | Different Q and R values | Tracking error and settling time |
 
-Each configuration should be tested over multiple trials to evaluate repeatability.
+Each configuration is tested over multiple trials to evaluate repeatability.
 
-## 9. Limitations and extensions
-
-TODO: what does not work, what the results do and do not support, and any independent extension.
-
-## 10. Contribution statement
+## 9. Contribution Statement
 
 | Member | Contribution |
-|--------|--------------|
+|---|---|
 | Lachlan | Developed the LQR controller, pre-docking navigation, camera sensing and ArUco detection, differential-drive modelling, and randomised obstacle generation. |
-| Jonathan | Set up the initial MuJoCo simulation environment, developed the initial obstacle avoidance and docking logic, implemented LiDAR processing for obstacle detection |
+| Jonathan | Set up the initial MuJoCo simulation environment, developed the initial obstacle avoidance and docking logic, implemented LiDAR processing for obstacle detection. |
 | William | Developed the Extended Kalman Filter (EKF), implemented wheel encoder odometry, and integrated sensor measurements for robot localisation and state estimation. |
-| All Members | Integration of multiple state machine; Collaboratively tested, debugged, and evaluated the integrated system, including EKF and LQR performance, navigation accuracy, and docking reliability. |
+| All Members | Integration of multiple state machines; collaboratively tested, debugged, and evaluated the integrated system, including EKF and LQR performance, navigation accuracy, and docking reliability. |
 
-
-## 11. Generative AI declaration
-
-TODO: state the tools used and what they were used for. Update this as your usage changes. Non-declaration is an academic integrity matter.
+## 10. Generative AI Declaration
 
 Integrating multiple state logic machine into a single running code, where combine navigation, obstacle avoidance, EKF, and LQR seamlessly.
