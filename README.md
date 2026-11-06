@@ -293,14 +293,6 @@ The LQR controller operates during the `PRE_DOCK` stage and uses the EKF-estimat
 
 The Linear Quadratic Regulator (LQR) minimises tracking error while penalising excessive control corrections.
 
-The linearised tracking-error system is:
-
-$$
-\mathbf{e}_{k+1}
-=
-A_d\mathbf{e}_k+B_d\Delta\mathbf{u}_k
-$$
-
 The LQR objective function is:
 
 $$
