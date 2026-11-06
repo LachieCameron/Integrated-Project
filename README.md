@@ -6,7 +6,7 @@
 
 **Group:** 25
 
-https://youtu.be/TScBIPqU-s8
+**Demo video (5 min): https://youtu.be/TScBIPqU-s8
 
 **Platform:** Simulation (MuJoCo). Hardware: N/A
 
