@@ -12,7 +12,9 @@ def test_loads_default_config():
     config = load_config(CONFIG)
 
     assert config.robot.wheel_base is None
-    assert config.ekf.wheel_distance_std == 0.002
+    assert config.ekf.wheel_noise_coeff == 1.0e-4
+    assert config.ekf.wheel_noise_floor_std == 1.0e-5
+    assert config.camera.fine_marker_size_m == 0.05
     assert config.ekf.initial_covariance == (0.01, 0.01, 0.01)
     assert config.tag_follower.target_ids == (0, 99)
 

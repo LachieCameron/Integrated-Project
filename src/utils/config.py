@@ -17,7 +17,8 @@ class RobotConfig:
 
 @dataclass(frozen=True)
 class EkfConfig:
-    wheel_distance_std: float
+    wheel_noise_coeff: float
+    wheel_noise_floor_std: float
     initial_covariance: tuple[float, float, float]
     camera_measurement_covariance: tuple[float, float, float]
     gyro_enabled: bool
@@ -53,6 +54,7 @@ class ObstacleConfig:
 class CameraConfig:
     calibration_file: str | None
     marker_size_m: float
+    fine_marker_size_m: float
     wall_marker_size_m: float
     aruco_dictionary: str
     detection_rate_hz: float
@@ -148,7 +150,10 @@ def load_config(path: str | Path) -> AppConfig:
             max_wheel_speed=_optional_positive(robot, "max_wheel_speed"),
         ),
         ekf=EkfConfig(
-            wheel_distance_std=_positive(ekf.get("wheel_distance_std"), "wheel_distance_std"),
+            wheel_noise_coeff=_positive(ekf.get("wheel_noise_coeff"), "wheel_noise_coeff"),
+            wheel_noise_floor_std=_positive(
+                ekf.get("wheel_noise_floor_std"), "wheel_noise_floor_std"
+            ),
             initial_covariance=_vector(ekf, "initial_covariance", ("x", "y", "yaw")),
             camera_measurement_covariance=_vector(
                 ekf, "camera_measurement_covariance", ("x", "y", "yaw")
@@ -178,6 +183,7 @@ def load_config(path: str | Path) -> AppConfig:
         camera=CameraConfig(
             calibration_file=calibration_file,
             marker_size_m=_positive(camera.get("marker_size_m"), "marker_size_m"),
+            fine_marker_size_m=_positive(camera.get("fine_marker_size_m"), "fine_marker_size_m"),
             wall_marker_size_m=_positive(
                 camera.get("wall_marker_size_m"), "wall_marker_size_m"
             ),

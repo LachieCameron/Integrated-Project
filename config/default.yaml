@@ -5,7 +5,9 @@ robot:
   max_wheel_speed: null
 
 ekf:
-  wheel_distance_std: 0.002
+  # Wheel distance noise: variance = wheel_noise_coeff * |distance| + wheel_noise_floor_std^2
+  wheel_noise_coeff: 1.0e-4      # m^2 per metre travelled
+  wheel_noise_floor_std: 1.0e-5  # m per step, keeps variance above zero
   initial_covariance:
     x: 0.01
     y: 0.01
@@ -47,7 +49,8 @@ obstacle_avoidance:
 
 camera:
   calibration_file: null
-  marker_size_m: 0.20
+  marker_size_m: 0.20          # dock tag (ID 0)
+  fine_marker_size_m: 0.05     # fine dock tag (ID 99)
   wall_marker_size_m: 0.40
   aruco_dictionary: DICT_5X5_100
   detection_rate_hz: 30
