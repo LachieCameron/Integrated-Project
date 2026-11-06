@@ -180,6 +180,50 @@ Where:
 - $\omega_R$: Right wheel angular velocity (rad/s).
 - $\omega_L$: Left wheel angular velocity (rad/s).
 
+**Discrete odometry model (EKF prediction).** From encoder wheel displacements $d_L, d_R$ over one step:
+
+$$
+\Delta s = \frac{d_R + d_L}{2}, \qquad \Delta\theta = \frac{d_R - d_L}{L}
+$$
+
+$$
+\mathbf{x}_{k+1} =
+\begin{bmatrix}
+x_k + \Delta s\cos(\theta_k + \Delta\theta/2) \\
+y_k + \Delta s\sin(\theta_k + \Delta\theta/2) \\
+\theta_k + \Delta\theta
+\end{bmatrix},
+\qquad
+F_k = \frac{\partial f}{\partial \mathbf{x}} =
+\begin{bmatrix}
+1 & 0 & -\Delta s\sin(\theta_k + \Delta\theta/2) \\
+0 & 1 & \Delta s\cos(\theta_k + \Delta\theta/2) \\
+0 & 0 & 1
+\end{bmatrix}
+$$
+
+**Measurement model.** The camera pipeline converts a wall-marker detection into a full pose, so
+
+$$
+\mathbf{z}_k = \begin{bmatrix} x_k \\ y_k \\ \theta_k \end{bmatrix} + \mathbf{v}_k, \qquad H = I_3
+$$
+
+The heading innovation is wrapped to $(-\pi, \pi]$.
+
+### 4.3 Controllability
+
+The lateral direction cannot be commanded directly (non-holonomic constraint). The nonlinear system is still controllable (the robot can reach any pose by combining turning and driving), but by Brockett's condition it cannot be stabilised to a fixed pose with smooth time-invariant state feedback. This is why the pipeline tracks a *moving reference* in `PRE_DOCK` instead of regulating directly to the dock pose.
+
+The error system is controllable whenever the reference is moving forward, which is the condition LQR relies on. As $v_r \to 0$ near the end of the pre-dock path, lateral error becomes uncontrollable, so the final alignment is handed over to the visual servo.
+
+### 4.4 Observability
+
+| Sensor available | Measured | Observable states |
+|---|---|---|
+| Wheel encoders only | Relative motion $d_L, d_R$ | None in absolute terms. Odometry integrates increments, so $x, y, \theta$ drift and $P$ grows without bound |
+| Camera, wall marker in view | Full pose $(x, y, \theta)$, $H = I_3$ | All three: $\mathcal{O} = H$ has rank 3 |
+| LiDAR | Ranges to obstacles | Not fused into the EKF (no map of obstacles), used only for avoidance and the dock stop |
+
 ## 5. Sensing and Calibration (Part B)
 
 ### 5.1 Sensor Configuration
