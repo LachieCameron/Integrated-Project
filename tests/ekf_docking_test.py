@@ -53,16 +53,22 @@ DOCK_HARD_STOP = 0.12
 DOCK_MIN_MARKER_WIDTH_PX = 100.0
 DOCK_CONFIRM_FRAMES = 3
 
-# Populate with *verified* scene marker world poses, rotations, and side lengths.
-# Example format (NOT real scene coordinates):
-# 0: {"position": np.array([x, y, z]), "rotation": R_world_marker, "size": side_m}
-KNOWN_MARKERS = {}
+# for calibration, use the parameters from the .xml file
+KNOWN_MARKERS = {
+    0: {
+        "position": np.array([2.4, 2.5, 0.3]),
+        "rotation": np.eye(3),
+        "size": 0.20
+    },
+    99: {
+        "position": np.array([2.4, 2.5, 0.1]),
+        "rotation": np.eye(3),
+        "size": 0.05
+    }
+}
 
-# 4x4 transform of the OpenCV optical camera frame relative to robot base.
-# Must account for MuJoCo camera axes -> OpenCV optical axes (x right,
-# y down, z forward), as well as the camera's mounting position/rotation.
-# Leave None until measured/derived from the robot XML.
-T_BASE_CAMERA = None
+# T_BASE_CAMERA = None
+T_BASE_CAMERA = np.eye(4)
 CAMERA_POSE_COVARIANCE = np.diag([0.08**2, 0.08**2, math.radians(5)**2])
 MAX_REPROJECTION_ERROR_PX = 3.0
 POSE_GATE_CHI2 = 11.345  # 99% chi-square threshold for 3 dimensions
