@@ -166,8 +166,8 @@ def run_trial(
     drive = DifferentialDrive.from_model(model)
     lidar = Lidar(model)
     encoder = WheelEncoder(model)
-    imu = IMUSensor(model) if config.ekf.gyro_enabled else None
     config = app_config or load_config(os.path.join(project_root, "config", "default.yaml"))
+    imu = IMUSensor(model) if config.ekf.gyro_enabled else None
     cfg = nav_config or nav_config_from_app(config, unknown_obstacles)
     tracker = LQRTrajectoryTracker(
         CTRL_DT,
