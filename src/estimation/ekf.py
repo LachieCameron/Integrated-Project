@@ -230,7 +230,7 @@ class RobotEKF:
         measurement: np.ndarray,
         covariance: np.ndarray,
         gate_chi2: float | None = None,
-    ) -> bool:
+    ) -> np.ndarray:
         """Correct with an absolute [x, y, yaw] pose (H = I), Joseph form.
 
         The measurement must be in the same world frame as the state and must
@@ -240,9 +240,8 @@ class RobotEKF:
         gate_chi2 : if given, reject the update when NIS exceeds it
                     (use GATE_CHI2_3DOF_99 for a 99% gate).
 
-        Returns True if the update was applied, False if it was gated out.
-        NIS, innovation and accept/reject are stored in last_nis,
-        last_innovation, last_accepted for logging.
+        Returns the current state estimate. NIS, innovation and accept/reject
+        are stored in last_nis, last_innovation, and last_accepted.
         """
         measurement = np.asarray(measurement, dtype=float)
         covariance = np.asarray(covariance, dtype=float)
@@ -271,7 +270,7 @@ class RobotEKF:
         if gate_chi2 is not None and nis > gate_chi2:
             self.last_accepted = False
             self.n_rejected += 1
-            return False
+            return self.state.copy()
 
         self.state += gain @ innovation
         self.state[2] = wrap_angle(float(self.state[2]))
@@ -282,14 +281,14 @@ class RobotEKF:
 
         self.last_accepted = True
         self.n_accepted += 1
-        return True
+        return self.state.copy()
 
     def correct_pose(
         self,
         measurement: np.ndarray,
         covariance: np.ndarray,
         gate_chi2: float | None = None,
-    ) -> bool:
+    ) -> np.ndarray:
         """Alias for :meth:`fuse_pose`."""
         return self.fuse_pose(measurement, covariance, gate_chi2)
 

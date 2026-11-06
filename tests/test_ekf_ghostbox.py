@@ -117,10 +117,10 @@ def main():
                             camera, int(marker_id), marker_corners, 0.4
                         )
                         if measurement is not None:
-                            accepted_measurement = fused.fuse_pose(
+                            fused.fuse_pose(
                                 measurement, np.diag([0.02, 0.02, 0.05])
                             )
-                            if accepted_measurement:
+                            if fused.last_accepted:
                                 accepted += 1
                             fused_pose = fused.state.copy()
                             break

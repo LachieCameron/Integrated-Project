@@ -246,7 +246,8 @@ def run_trial(
                     )
                     if measurement is not None:
                         covariance = np.diag(config.ekf.camera_measurement_covariance)
-                        pose_est = ekf.fuse_pose(measurement, covariance)
+                        ekf.fuse_pose(measurement, covariance)
+                        pose_est = ekf.state.copy()
                         break
 
         # ---- navigation + LQR -----------------------------------------------------------
