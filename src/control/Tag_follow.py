@@ -160,8 +160,10 @@ class TagFollower:
         self.active_target_id = None
         
         # State Machine Flags
-        self.state = "INITIAL_360_SCAN"  # States: INITIAL_360_SCAN, TRACKING, LOST_STOPPED
-        self.has_completed_360 = False
+        # self.state = "INITIAL_360_SCAN"  # States: INITIAL_360_SCAN, TRACKING, LOST_STOPPED
+        # self.has_completed_360 = False
+        self.state = "TRACKING"  # States: INITIAL_360_SCAN, TRACKING, LOST_STOPPED
+        self.has_completed_360 = True
         self.initial_heading = None
         self.accumulated_turn = 0.0
         self.last_heading = None
@@ -186,10 +188,10 @@ class TagFollower:
         Computes target [v, w] vectors while tracking a complete 360-degree rotation.
         """
         # Initialize heading references on the very first loop step
-        if self.initial_heading is None:
-            self.initial_heading = current_heading
-            self.last_heading = current_heading
-            return 0.0, self.scan_speed
+        # if self.initial_heading is None:
+        #     self.initial_heading = current_heading
+        #     self.last_heading = current_heading
+        #     return 0.0, self.scan_speed
 
         # Core Check: If we see our target tag during the initial scan phase, log it!
         target = self._target_index(ids)
@@ -197,7 +199,8 @@ class TagFollower:
             self.spotted_target_during_scan = True
 
         # --- STATE 1: FORCED INITIAL 360 SCAN ---
-        if self.state == "INITIAL_360_SCAN":
+        # if self.state == "INITIAL_360_SCAN":
+        if self.state == "TRACKING" and not self.has_completed_360:
             # Track shortest angular difference across wraparounds (-pi to +pi)
             delta_heading = np.arctan2(np.sin(current_heading - self.last_heading), 
                                       np.cos(current_heading - self.last_heading))
