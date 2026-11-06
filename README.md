@@ -511,11 +511,3 @@ TODO: what does not work, what the results do and do not support, and any indepe
 TODO: state the tools used and what they were used for. Update this as your usage changes. Non-declaration is an academic integrity matter.
 
 Integrating multiple state logic machine into a single running code, where combine navigation, obstacle avoidance, EKF, and LQR seamlessly.
-
-## 12. Acknowledgements
-
-TODO: list code adapted from the weekly tutorials, MuJoCo examples, the Robotics Toolbox, and the source of the TurtleBot3 MuJoCo model.
-
-ArUco Marker Generation: [text](https://chev.me/arucogen/)
-
-MuJoCo Documentation: 
