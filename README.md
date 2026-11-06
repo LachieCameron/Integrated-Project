@@ -53,6 +53,7 @@ flowchart TD
     ACT["Wheel actuators<br/>left/right angular velocity"]
     SENSOR["Sensor outputs"]
     ENC["Wheel encoder<br/>distance increments"]
+    IMU["IMU<br/>gyro-Z increment (optional)"]
     CAM["RGB camera<br/>ArUco IDs and corners"]
     LIDAR["LiDAR scan<br/>front / left / right sectors"]
 
@@ -77,9 +78,11 @@ flowchart TD
     CONVERT --> ACT --> PLANT
     PLANT --> SENSOR
     SENSOR --> ENC
+    SENSOR --> IMU
     SENSOR --> CAM
     SENSOR --> LIDAR
     ENC --> PREP
+    IMU -->|"optional yaw increment"| PREDICT
     CAM --> PREP
     LIDAR --> PREP
     PREP --> PREDICT --> EKF
@@ -118,7 +121,7 @@ flowchart TD
 
     class START,CONFIG,SCENE,INIT setup
     class PLANT,ACT plant
-    class SENSOR,ENC,CAM,LIDAR,PREP sensor
+    class SENSOR,ENC,IMU,CAM,LIDAR,PREP sensor
     class PREDICT,POSE,GATE,EKF estimate
     class TAG,AVOID,PREDOCK,VISUAL,APPROACH,TWIST,CONVERT control
     class CHARGE terminal
@@ -181,13 +184,22 @@ Where:
 
 ### 5.1 Sensor Configuration
 
-Three main sensors are implemented for navigation, localisation and obstacle avoidance.
+Four sensor interfaces are implemented for navigation, localisation and
+obstacle avoidance. IMU gyro fusion is optional and is enabled through the
+EKF configuration.
 
 | Sensor | Measurement | Purpose |
 |---|---|---|
 | Wheel Encoders | Left and right wheel displacement | Predict robot motion in the EKF |
+| IMU | Angular velocity, using the Z-axis gyro | Optional yaw-increment fusion with wheel odometry |
 | RGB Camera | ArUco marker ID, corners and relative pose | Detect navigation targets and correct the EKF estimate |
 | LiDAR | Distance to nearby obstacles | Detect obstacles and support collision avoidance |
+
+The production pipeline can fuse the IMU gyro-Z increment with wheel odometry
+when `ekf.gyro_enabled` is enabled. The primary
+[`ekf_docking_test.py`](tests/ekf_docking_test.py) experiment currently uses
+wheel odometry plus camera pose corrections; the IMU path is available in the
+configurable Track A pipeline.
 
 ### 5.2 Coordinate Frames
 
