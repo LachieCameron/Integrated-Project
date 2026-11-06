@@ -331,7 +331,9 @@ def run_trial(
         out = nav.update(pose_est, ranges)
         if visual_docking is not None and visual_control_active:
             out.v, out.w = visual_command
-            if visual_docking.confirm_count >= visual_docking.config.confirm_frames:
+            if visual_docking.at_stop(float(np.min(ranges[4:9]))) or (
+                visual_docking.confirm_count >= visual_docking.config.confirm_frames
+            ):
                 visual_docked = True
                 visual_control_active = False
                 visual_command = (0.0, 0.0)

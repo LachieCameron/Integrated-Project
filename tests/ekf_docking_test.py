@@ -265,6 +265,24 @@ def main():
             return
 
         if (
+            docking_phase
+            and not charged
+            and np.isfinite(front)
+            and front <= DOCK_HARD_STOP
+            and (
+                legacy_straight_approach
+                or visual_docking.straight_approach
+            )
+        ):
+            charged = True
+            mode = "CHARGED"
+            follower.state = "CHARGED"
+            desired_v = desired_w = 0.0
+            print(f"[{data.time:.2f}s] DOCK RANGE REACHED; charging")
+            data.ctrl[0] = data.ctrl[1] = 0.0
+            return
+
+        if (
             mode == "FOLLOW"
             and (not docking_phase or dock_phase == "PRE_DOCK")
             and desired_v > 0
@@ -446,42 +464,42 @@ def main():
                         turn_start_heading = heading
                         turn_direction = 1 if left >= right else -1
                         desired_v = desired_w = 0.0
-                elif dock_phase == "VISUAL_APPROACH" and id99_visible:
+                elif dock_phase == "VISUAL_APPROACH":
                     if visual_docking.straight_approach:
-                        desired_v, desired_w, docked = visual_docking.command(
+                        desired_v, desired_w, _ = visual_docking.command(
                             None, None, None, front
                         )
-                        dock_confirm_count = visual_docking.confirm_count
+                    elif id99_visible:
+                        width, center_error, signed_error = visible[DOCK_ID]
+                        desired_w = (
+                            0.0
+                            if center_error <= VISUAL_CENTER_DEADBAND
+                            else float(np.clip(
+                                -follower.Kp_angular * signed_error,
+                                -0.25,
+                                0.25,
+                            ))
+                        )
+                        if center_error > ID99_CENTER_BEFORE_DRIVE:
+                            desired_v = 0.0
+                        elif width < DOCK_TARGET_WIDTH_PX:
+                            desired_v = float(np.clip(
+                                follower.Kp_linear
+                                * (DOCK_TARGET_WIDTH_PX - width)
+                                / DOCK_TARGET_WIDTH_PX,
+                                0.0,
+                                0.08,
+                            ))
+                        else:
+                            visual_docking.start_straight_approach()
+                            desired_v = 0.025 if front > DOCK_HARD_STOP else 0.0
+                            desired_w = 0.0
                     else:
-                        visual_docking.reset()
-                        dock_confirm_count = 0
                         desired_v = 0.0
                         desired_w = (
                             -ID99_SEARCH_W if last_id99_signed_error > 0.05
                             else ID99_SEARCH_W
                         )
-                elif dock_phase == "VISUAL_APPROACH" and id99_visible:
-                    width, center_error, signed_error = visible[DOCK_ID]
-                    desired_v, desired_w, docked = visual_docking.command(
-                        width,
-                        center_error,
-                        signed_error,
-                        front,
-                        heading,
-                        PRE_DOCK_POSE[2],
-                    )
-                    dock_confirm_count = visual_docking.confirm_count
-                    if data.time - last_dock_debug >= STATUS_INTERVAL:
-                        print(f"[{data.time:.2f}s] ID99 width={width:.1f}px "
-                              f"center_error={center_error:.3f} "
-                              f"confirm={dock_confirm_count}/{DOCK_CONFIRM_FRAMES}")
-                        last_dock_debug = float(data.time)
-                    if docked:
-                        charged = True
-                        mode = "CHARGED"
-                        follower.state = "CHARGED"
-                        desired_v = desired_w = 0.0
-                        print(f"[{data.time:.2f}s] SIMULATED DOCKING COMPLETE; motors stopped")
 
                 if docking_phase and not charged and front < DOCK_HARD_STOP:
                     desired_v = desired_w = 0.0

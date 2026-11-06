@@ -51,6 +51,14 @@ class VisualDockingController:
     def straight_approach(self) -> bool:
         return self._straight_approach
 
+    def at_stop(self, front_distance: float) -> bool:
+        """Return whether the front range has reached the dock stop distance."""
+        return bool(np.isfinite(front_distance) and front_distance <= self.config.hard_stop_distance)
+
+    def start_straight_approach(self) -> None:
+        """Latch the final approach after the tag controller has aligned."""
+        self._straight_approach = True
+
     def command(
         self,
         marker_width_px: float | None,
@@ -71,6 +79,9 @@ class VisualDockingController:
             return 0.0, 0.0, False
         if marker_width_px is None or center_error is None or signed_center_error is None:
             if self._straight_approach:
+                if self.at_stop(front_distance):
+                    self.confirm_count = cfg.confirm_frames
+                    return 0.0, 0.0, True
                 reached = (
                     0.0 <= front_distance <= cfg.complete_distance
                 )
@@ -143,7 +154,7 @@ class VisualDockingController:
             ))
 
         reached = (
-            0.0 <= front_distance <= cfg.complete_distance
+            self.at_stop(front_distance)
             and marker_width_px >= cfg.min_marker_width_px
             and filtered_center_error <= cfg.center_tolerance
         )
