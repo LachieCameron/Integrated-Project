@@ -534,7 +534,7 @@ Each configuration is tested over multiple trials to evaluate repeatability.
 |---|---|
 | Lachlan | Developed the LQR controller, pre-docking navigation, camera sensing and ArUco detection, differential-drive modelling, and randomised obstacle generation. |
 | Jonathan | Set up the initial MuJoCo simulation environment, developed the initial obstacle avoidance and docking logic, implemented LiDAR processing for obstacle detection. |
-| William | Developed the Extended Kalman Filter (EKF), implemented wheel encoder odometry, and integrated sensor measurements for robot localisation and state estimation. |
+| William | Developed the Extended Kalman Filter (EKF), implemented wheel encoder odometry, integrated camera measurements and scene randomisation, and contributed to robot localisation and state estimation. |
 | All Members | Integration of multiple state machines; collaboratively tested, debugged, and evaluated the integrated system, including EKF and LQR performance, navigation accuracy, and docking reliability. |
 
 ## 10. Generative AI Declaration
