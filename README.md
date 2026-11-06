@@ -244,6 +244,32 @@ The camera correction uses a chi-square innovation gate with a threshold of 11.3
 - Tuning, consistency checks and reported performance: TODO
 
 
+## 6. Estimation (Part C)
+
+### 6.1 EKF Design and Parameters
+
+An Extended Kalman Filter (EKF) estimates the robot's position $(x,y)$ and heading $(\theta)$ by combining wheel encoder odometry with ArUco camera measurements.
+
+- **Prediction:** Wheel encoders estimate the robot's movement.
+- **Correction:** Camera measurements correct accumulated odometry drift when an ArUco marker is visible.
+
+**EKF Parameter Table:**
+
+| Parameter | Value | Justification |
+|---|---|---|
+| Q (Process Noise) | Calculated from wheel-motion uncertainty | Accounts for encoder and motion-model errors |
+| R (Camera Noise) | diag(0.08², 0.08², 5°²) | Represents camera position and heading uncertainty |
+| P0 (Initial Covariance) | diag(0.15², 0.15², 15°²) | Represents uncertainty in the initial robot pose |
+
+### 6.2 Tuning, Consistency Checks and Performance
+
+The EKF uses a **chi-square innovation gate of 11.345** to reject inconsistent camera measurements.
+
+Performance can be evaluated by comparing the EKF-estimated trajectory against MuJoCo ground truth using position and heading RMSE.
+
+When the ArUco marker is not visible, the EKF continues predicting from wheel encoders, but estimation uncertainty can increase.
+
+**Results:** Quantitative RMSE and consistency results still need to be recorded from simulation trials.
 
 ## 7. Control (Part D)
 
@@ -494,6 +520,8 @@ TODO: what does not work, what the results do and do not support, and any indepe
 ## 11. Generative AI declaration
 
 TODO: state the tools used and what they were used for. Update this as your usage changes. Non-declaration is an academic integrity matter.
+
+Integrating multiple state logic machine into a single running code, where combine navigation, obstacle avoidance, EKF, and LQR seamlessly.
 
 ## 12. Acknowledgements
 
