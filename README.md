@@ -42,36 +42,88 @@ passive MuJoCo viewer and can be disabled with `--no-ghost`.
 
 ### Block diagram
 
-```
-                +---------------------------+
-                |     MuJoCo simulator      |
-                |  (TurtleBot3 Waffle Pi)   |
-                +---------------------------+
-                  |          |          |  ^
-                  v          v          v  |
-           +---------+ +---------+ +-------+  |
-           | Wheel   | | Camera  | | LiDAR |  |
-           | encoder | | (ArUco) | |       |  |
-           +---------+ +---------+ +-------+  |
-                |           |          |      |
-         predict|    correct|          |      |
-                v           v          |      |
-           +---------------------+     |      |
-           |   EKF (x, y, yaw)   |     |      |
-           +---------------------+     |      |
-                      |                |      |
-                      v                v      |
-           +------------------------------+   |
-           |      Mission state machine   |   |
-           | TagFollower / LQR / Visual   |   |
-           +------------------------------+   |
-                      |                       |
-                      v                       |
-           +------------------------------+   |
-           |  v, w  ->  wheel speeds      |---+
-           +------------------------------+
-```
+```mermaid
+flowchart TD
+    START(["Start experiment"])
+    CONFIG["Load configuration<br/>EKF, LQR, camera and obstacle parameters"]
+    SCENE["Load MuJoCo XML<br/>optional in-memory obstacle randomisation"]
+    INIT["Initialise robot, camera, wheel encoder,<br/>LiDAR, EKF and controllers"]
 
+    PLANT["MuJoCo plant<br/>TurtleBot3 Waffle Pi"]
+    ACT["Wheel actuators<br/>left/right angular velocity"]
+    SENSOR["Sensor outputs"]
+    ENC["Wheel encoder<br/>distance increments"]
+    CAM["RGB camera<br/>ArUco IDs and corners"]
+    LIDAR["LiDAR scan<br/>front / left / right sectors"]
+
+    PREP["Preprocess measurements<br/>valid ranges, marker pose and sectors"]
+    PREDICT["EKF prediction<br/>wheel odometry"]
+    POSE["Camera pose measurement<br/>known marker map"]
+    GATE{"NIS gate<br/>accept or reject correction"}
+    EKF["Fused RobotEKF state<br/>estimated x, y, yaw"]
+
+    TAG["Coarse tag following<br/>ID 0"]
+    AVOID["Obstacle avoidance<br/>turn toward clearer side, bypass"]
+    PREDOCK["PreDockLQR<br/>track [2.4, 2.15, pi/2]"]
+    VISUAL["Fine visual docking<br/>ID 99 centering and width"]
+    APPROACH["Latched straight approach<br/>angular velocity = 0"]
+    CHARGE["CHARGED<br/>front LiDAR <= 0.14 m"]
+    TWIST["Command arbitration<br/>v, omega"]
+    CONVERT["Differential-drive conversion<br/>twist to wheel speeds"]
+
+    EVAL["Evaluation only<br/>MuJoCo ground truth, RMSE and collisions"]
+
+    START --> CONFIG --> SCENE --> INIT --> PLANT
+    CONVERT --> ACT --> PLANT
+    PLANT --> SENSOR
+    SENSOR --> ENC
+    SENSOR --> CAM
+    SENSOR --> LIDAR
+    ENC --> PREP
+    CAM --> PREP
+    LIDAR --> PREP
+    PREP --> PREDICT --> EKF
+    PREP --> POSE --> GATE
+    GATE -->|"accepted"| EKF
+    GATE -.->|"rejected"| EKF
+
+    EKF --> TAG
+    TAG -->|"dock tag detected"| PREDOCK
+    EKF --> PREDOCK
+    LIDAR --> AVOID
+    AVOID -->|"replan from EKF pose"| PREDOCK
+    PREDOCK -->|"pre-dock reached"| VISUAL
+    CAM --> VISUAL
+    VISUAL -->|"aligned and target width reached"| APPROACH
+    LIDAR --> APPROACH
+    APPROACH -->|"front range <= 0.14 m"| CHARGE
+
+    TAG --> TWIST
+    AVOID --> TWIST
+    PREDOCK --> TWIST
+    VISUAL --> TWIST
+    APPROACH --> TWIST
+    CHARGE -->|"zero command"| TWIST
+    TWIST --> CONVERT
+
+    PLANT -.-> EVAL
+
+    classDef setup fill:#f3f4f6,stroke:#6b7280,color:#111827
+    classDef plant fill:#e0f2fe,stroke:#0284c7,color:#111827
+    classDef sensor fill:#e8f1ff,stroke:#2563eb,color:#111827
+    classDef estimate fill:#ecfdf5,stroke:#059669,color:#111827
+    classDef control fill:#fff7ed,stroke:#ea580c,color:#111827
+    classDef terminal fill:#fef2f2,stroke:#dc2626,color:#111827
+    classDef eval fill:#f5f3ff,stroke:#7c3aed,color:#111827
+
+    class START,CONFIG,SCENE,INIT setup
+    class PLANT,ACT plant
+    class SENSOR,ENC,CAM,LIDAR,PREP sensor
+    class PREDICT,POSE,GATE,EKF estimate
+    class TAG,AVOID,PREDOCK,VISUAL,APPROACH,TWIST,CONVERT control
+    class CHARGE terminal
+    class EVAL eval
+```
 
 Constraint: the controller uses the estimated state only. Simulator ground truth is used for evaluation only.
 
