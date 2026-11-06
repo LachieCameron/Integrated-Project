@@ -65,7 +65,7 @@ flowchart TD
 
     TAG["Coarse tag following<br/>ID 0"]
     AVOID["Obstacle avoidance<br/>turn toward clearer side, bypass"]
-    PREDOCK["PreDockLQR<br/>track [2.4, 2.15, pi/2]"]
+    PREDOCK["PRE_DOCK Navigator<br/>LQRTrajectoryTracker to [2.4, 2.15, pi/2]"]
     VISUAL["Fine visual docking<br/>ID 99 centering and width"]
     APPROACH["Latched straight approach<br/>angular velocity = 0"]
     CHARGE["CHARGED<br/>front LiDAR <= 0.14 m"]
@@ -268,7 +268,9 @@ Where:
 
 The camera model may also include distortion coefficients to correct lens distortion.
 
-The camera measurement is accepted by the EKF only when it passes the innovation-gating test.
+Camera observations are first filtered by marker-pose validity and
+reprojection error, then the resulting absolute pose is accepted by the EKF
+only when it passes the innovation-gating test.
 
 ### 5.4 LiDAR Processing
 
@@ -296,9 +298,10 @@ The main obstacle avoidance parameters are:
 
 When an obstacle is detected, the robot can stop, turn toward the clearer direction and move forward to bypass it.
 
-During pre-docking, LiDAR measurements are used to interrupt the
-`PreDockLQR` controller and run the obstacle-avoidance state machine. The LQR
-controller is reset after avoidance so it replans from the updated EKF pose.
+During pre-docking, LiDAR measurements are passed to the `Navigator`, which
+uses an `LQRTrajectoryTracker` and can interrupt tracking for the
+obstacle-avoidance state machine. After avoidance, navigation continues from
+the updated EKF pose.
 
 ### 5.5 Sensor Noise Characterisation
 
@@ -324,26 +327,60 @@ The camera correction uses a chi-square innovation gate with a threshold of 11.3
 
 ### 6.1 EKF Design and Parameters
 
-An Extended Kalman Filter (EKF) estimates the robot's position $(x, y)$ and heading $(\theta)$ by combining wheel encoder odometry with ArUco camera measurements.
+The production EKF state is:
 
-- **Prediction:** Wheel encoders estimate the robot's movement.
-- **Correction:** Camera measurements correct accumulated odometry drift when an ArUco marker is visible.
+$$
+\mathbf{x} = [x,\ y,\ \theta]^T
+$$
+
+where $(x,y)$ is the robot pose in the world frame and $\theta$ is yaw. The
+primary docking experiment uses wheel encoder distances for prediction and
+calibrated ArUco observations for absolute-pose correction.
+
+- **Prediction:** `WheelEncoder` converts wheel-joint motion into left and
+  right wheel distances. `RobotEKF.predict()` applies the differential-drive
+  motion model and propagates the covariance using distance-dependent wheel
+  noise.
+- **Correction:** A known marker map and the camera pose estimate are used to
+  construct an absolute $[x,y,\theta]$ robot-pose measurement. The EKF applies
+  an identity-measurement update when the innovation passes the NIS gate.
+- **Angle handling:** Yaw innovations and the stored yaw state are wrapped to
+  $[-\pi,\pi)$.
+- **Numerical stability:** The covariance is symmetrised after prediction and
+  the correction uses the Joseph covariance form.
 
 EKF parameter table:
 
 | Parameter | Value | Justification |
 |---|---|---|
-| Q (Process Noise) | Calculated from wheel-motion uncertainty | Accounts for encoder and motion-model errors |
-| R (Camera Noise) | diag(0.08², 0.08², 5°²) | Represents camera position and heading uncertainty |
-| P0 (Initial Covariance) | diag(0.15², 0.15², 15°²) | Represents uncertainty in the initial robot pose |
+| State | $[x,y,\theta]$ | Planar world-frame pose |
+| Wheel noise coefficient | $1.0\times10^{-4}$ | Distance-dependent variance contribution |
+| Wheel noise floor | $(1.0\times10^{-5}\,\mathrm{m})^2$ | Prevents zero process variance |
+| Camera covariance $R$ | $\mathrm{diag}(0.08^2,0.08^2,5^\circ{}^2)$ | Assumed absolute-pose measurement uncertainty |
+| Initial covariance $P_0$ | $\mathrm{diag}(0.15^2,0.15^2,15^\circ{}^2)$ | Initial pose uncertainty in `ekf_docking_test.py` |
+| Innovation gate | 11.345 | 99% chi-square gate for 3 pose dimensions |
 
 ### 6.2 Tuning, Consistency Checks and Performance
 
-The EKF uses a chi-square innovation gate of 11.345 to reject inconsistent camera measurements.
+For each camera correction, the innovation is:
+
+$$
+\boldsymbol{\nu} = \mathbf{z} - \hat{\mathbf{x}}
+$$
+
+with yaw wrapped before calculating the normalized innovation squared (NIS).
+Measurements with $\mathrm{NIS} > 11.345$ are rejected; accepted measurements
+reduce the pose uncertainty. Rejected measurements do not overwrite the EKF
+state.
 
 Performance can be evaluated by comparing the EKF-estimated trajectory against MuJoCo ground truth using position and heading RMSE.
 
-When the ArUco marker is not visible, the EKF continues predicting from wheel encoders, but estimation uncertainty can increase.
+When no usable marker is visible, the EKF continues predicting from wheel
+encoders and its covariance can increase. In the primary
+`ekf_docking_test.py` run, IMU fusion is disabled and accelerometer data is not
+used. The configurable Track A pipeline can optionally fuse gyro-Z increments
+with wheel odometry when `ekf.gyro_enabled` is enabled; this is an optional
+extension rather than part of the primary docking result.
 
 ## 7. Control (Part D)
 
@@ -355,11 +392,12 @@ The project uses a hybrid control system consisting of ArUco marker following, L
 |---|---|---|
 | Initial navigation | TagFollower | Track coarse ArUco marker ID 0 |
 | Obstacle avoidance | LiDAR-based navigation | Avoid obstacles during movement |
-| Pre-docking | LQR trajectory tracking | Navigate to the pre-docking pose |
-| Fine docking | Visual proportional control | Align with ArUco marker ID 99 |
+| Pre-docking | Navigator + LQRTrajectoryTracker | Navigate to the pre-docking pose |
+| Fine docking | `VisualDockingController` | Filter and align with ArUco marker ID 99 |
 | Docking completion | LiDAR stop and confirmation | Stop at a front-LiDAR range of 0.14 m and enter simulated `CHARGED` |
 
-The LQR controller operates during the PRE_DOCK stage and uses the EKF-estimated robot pose as feedback.
+During the PRE_DOCK stage, `Navigator` supplies the reference and safety logic
+while `LQRTrajectoryTracker` uses the EKF-estimated pose as feedback.
 
 ### 7.2 LQR Controller Design
 
@@ -407,7 +445,10 @@ These limits help prevent excessively aggressive movements during docking.
 
 ### 7.4 LQR Tuning Method
 
-To justify the selected LQR parameters, different Q and R configurations are tested under identical initial conditions.
+The controller exposes $Q$ and $R$ so that different configurations can be
+compared under identical initial conditions. The repository currently
+documents the configured values but does not contain a recorded comparative
+Q/R sweep.
 
 The main performance metrics are:
 
@@ -431,10 +472,10 @@ The selected Q and R values should provide an appropriate balance between tracki
 
 | Configuration | Q Diagonal | R Diagonal | Position RMSE (m) | Settling Time (s) |
 |---|---|---|---|---|
-| Baseline | (1, 1, 0.5) | (0.1, 0.1) | TBD | TBD |
-| Higher heading penalty | TBD | TBD | TBD | TBD |
-| Higher control penalty | TBD | TBD | TBD | TBD |
-| Selected configuration | TBD | TBD | TBD | TBD |
+| Configured controller | (1.0, 1.0, 0.5) | (0.1, 0.1) | Not recorded | Not recorded |
+
+No comparative Q/R sweep results are recorded in this repository; the table
+documents the configured values rather than claiming measured performance.
 
 ### 7.6 Final Visual Docking
 
@@ -487,9 +528,10 @@ Avoidance sequence:
 5. **Obstacle Rechecking:** If another obstacle is detected within the stop distance, the robot returns to AVOID_TURN.
 6. **Navigation Resumption:** Once the avoidance movement is completed, the robot returns to normal navigation.
 
-During the PRE_DOCK stage, LiDAR readings interrupt the `PreDockLQR`
-controller and select the clearer side for the avoidance turn. After the
-avoidance segment, the pre-dock LQR controller replans from the EKF estimate.
+During the PRE_DOCK stage, LiDAR readings are supplied to the `Navigator`,
+which selects the clearer side for the avoidance turn while the
+`LQRTrajectoryTracker` follows the pre-dock reference. After the avoidance
+segment, navigation continues from the EKF estimate.
 
 ### 8.2 Integration Testing
 
@@ -508,9 +550,8 @@ These tests assess the interaction between subsystems rather than evaluating eac
 
 ### 8.3 Robustness Testing Under Varied Conditions
 
-To evaluate system reliability, the robot was tested in different environment conditions where obstacle positions were randomly changed.
-
-The simulation supports randomised obstacle placement using:
+The simulation supports testing different environment conditions by changing
+obstacle positions at runtime:
 
 ```bash
 python3 tests/ekf_docking_test.py --random-scene --scene-seed 92 --obstacle-count 3
@@ -526,7 +567,8 @@ Different scene seeds and obstacle counts can be used to evaluate the system und
 | Sensor noise | Increased encoder or camera noise | EKF estimation accuracy |
 | LQR tuning | Different Q and R values | Tracking error and settling time |
 
-Each configuration is tested over multiple trials to evaluate repeatability.
+Repeated trials can be used to evaluate repeatability, but recorded
+multi-trial results are not included in this repository.
 
 ## 9. Contribution Statement
 
