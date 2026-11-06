@@ -117,10 +117,12 @@ def main():
                             camera, int(marker_id), marker_corners, 0.4
                         )
                         if measurement is not None:
-                            fused_pose = fused.fuse_pose(
+                            accepted_measurement = fused.fuse_pose(
                                 measurement, np.diag([0.02, 0.02, 0.05])
                             )
-                            accepted += 1
+                            if accepted_measurement:
+                                accepted += 1
+                            fused_pose = fused.state.copy()
                             break
 
             true_pose = np.array(
