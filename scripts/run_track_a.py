@@ -11,7 +11,8 @@ Run from the project root::
 
 Ground-truth rule: the controller and navigator receive only ``ekf.state`` and
 LiDAR ranges.  Wheel odometry is the prediction source; optional IMU gyro and
-ArUco wall-marker observations are fused by ``RobotEKF``.  ``data.qpos`` /
+ArUco observations of the wall markers and dock tags (known map in
+``WALL_MARKERS``) are fused by ``RobotEKF`` through a 99% NIS gate.  ``data.qpos`` /
 ``data.xpos`` are read in exactly two places,
 both marked ``# GROUND TRUTH``: placing the robot at its start pose, and the
 evaluation log.
@@ -36,7 +37,7 @@ if project_root not in sys.path:
 from src.control.lqr import body_frame_error
 from src.control.lqr import LQRTrajectoryTracker
 from src.control.navigation import NavConfig, Navigator, State, boxes_from_model
-from src.estimation.ekf import RobotEKF
+from src.estimation.ekf import GATE_CHI2_3DOF_99, RobotEKF
 from src.kinematics.differential_drive import DifferentialDrive, wrap_angle
 from src.sensing.lidar_scan import Lidar
 from src.sensing.IMU import IMUSensor
@@ -53,7 +54,11 @@ WALL_MARKERS = {
     44: ((-2.9, 0.0, 0.5), math.pi / 2.0),
     66: ((2.9, 0.0, 0.5), -math.pi / 2.0),
     88: ((0.0, 2.9, 0.5), 0.0),
+    0: ((2.4, 2.5, 0.3), 0.0),    # dock tag
+    99: ((2.4, 2.5, 0.1), 0.0),   # fine dock tag
 }
+DOCK_MARKER_ID = 0
+FINE_DOCK_MARKER_ID = 99
 CAMERA_POSITION_IN_ROBOT = np.array([0.078, 0.0, 0.107])
 # OpenCV camera axes (right, down, forward) expressed in robot axes
 # (forward, left, up).
@@ -97,6 +102,27 @@ def robot_pose_from_wall_marker(camera, marker_id, corners, marker_size_m):
          math.atan2(robot_rotation[1, 0], robot_rotation[0, 0])],
         dtype=float,
     )
+
+
+_DEFAULT_CONFIG: AppConfig | None = None
+
+
+def marker_size_for(marker_id: int, config: AppConfig | None = None) -> float:
+    """Side length [m] of a marker, from the camera section of the config.
+
+    With no ``config`` the default YAML is used, so helper scripts can call
+    ``marker_size_for(marker_id)`` directly.
+    """
+    global _DEFAULT_CONFIG
+    if config is None:
+        if _DEFAULT_CONFIG is None:
+            _DEFAULT_CONFIG = load_config(os.path.join(project_root, "config", "default.yaml"))
+        config = _DEFAULT_CONFIG
+    if marker_id == DOCK_MARKER_ID:
+        return config.camera.marker_size_m
+    if marker_id == FINE_DOCK_MARKER_ID:
+        return config.camera.fine_marker_size_m
+    return config.camera.wall_marker_size_m
 
 
 def free_start_pose(model, rng, clearance=0.35, max_tries=1000):
@@ -205,7 +231,9 @@ def run_trial(
     ekf = RobotEKF(
         model=None if ekf_wheel_base else model,
         wheel_base=ekf_wheel_base,
-        wheel_distance_std=max(enc_noise, config.ekf.wheel_distance_std),
+        wheel_noise_coeff=config.ekf.wheel_noise_coeff,
+        # Injected encoder noise (--enc-noise) is known to the filter via the floor term.
+        wheel_noise_floor_std=max(enc_noise, config.ekf.wheel_noise_floor_std),
         initial_state=ekf_start,
         initial_covariance=initial_covariance,
     )
@@ -242,12 +270,12 @@ def run_trial(
                 for marker_corners, marker_id in zip(corners, marker_ids.reshape(-1)):
                     measurement = robot_pose_from_wall_marker(
                         cam, int(marker_id), marker_corners,
-                        config.camera.wall_marker_size_m,
+                        marker_size_for(int(marker_id), config),
                     )
                     if measurement is not None:
                         covariance = np.diag(config.ekf.camera_measurement_covariance)
-                        ekf.fuse_pose(measurement, covariance)
-                        pose_est = ekf.state.copy()
+                        # Returns the state either way; ekf.last_accepted records the gate decision.
+                        pose_est = ekf.fuse_pose(measurement, covariance, gate_chi2=GATE_CHI2_3DOF_99)
                         break
 
         # ---- navigation + LQR -----------------------------------------------------------
