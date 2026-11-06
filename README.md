@@ -3,6 +3,7 @@
 **41014 Sensors and Control in Mechatronics Systems, Assessment 4: Integrated Project**
 
 Team: Lachlan Cameron, Jonathan Wijaya, William Hsu
+
 Group: 25
 
 > Demo video (5 min): _TODO link_
