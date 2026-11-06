@@ -1,12 +1,11 @@
 #!/usr/bin/env python3
 """Track A: ArUco coarse/fine docking, LiDAR avoidance, wheel-odometry EKF.
 
-Camera-to-EKF fusion uses the calibrated wall-marker helper from Track A.
-No MuJoCo ground truth is used for navigation. The CHARGED flag is a
-simulated docking-success indication.
+Camera-to-EKF fusion is enabled only after KNOWN_MARKERS and T_BASE_CAMERA
+are populated with verified scene geometry. No MuJoCo ground truth is used
+for navigation. The CHARGED flag is a simulated docking-success indication.
 """
 import argparse
-import importlib.util
 import math
 import os
 import sys
@@ -25,17 +24,6 @@ from src.sensing.cam import RaspiCamera
 from src.sensing.wheel_encoder import WheelEncoder
 from src.estimation.ekf import RobotEKF
 from src.control.Tag_follow import DiffDriveController, TagFollower
-
-
-def load_track_helpers():
-    path = os.path.join(PROJECT_ROOT, "scripts", "run_track_a.py")
-    spec = importlib.util.spec_from_file_location("run_track_a", path)
-    if spec is None or spec.loader is None:
-        raise RuntimeError("could not load Track A helpers")
-    module = importlib.util.module_from_spec(spec)
-    spec.loader.exec_module(module)
-    return module
-
 
 CAM_INTERVAL = 1.0 / 30.0
 STATUS_INTERVAL = 1.0
@@ -67,7 +55,24 @@ DOCK_HARD_STOP = 0.12
 DOCK_MIN_MARKER_WIDTH_PX = 100.0
 DOCK_CONFIRM_FRAMES = 3
 
+# These values are retained for calibration experiments only. The marker
+# rotations and camera extrinsics must be verified before enabling fusion.
+KNOWN_MARKERS = {
+    0: {
+        "position": np.array([2.4, 2.5, 0.3]),
+        "rotation": np.eye(3),
+        "size": 0.20
+    },
+    99: {
+        "position": np.array([2.4, 2.5, 0.1]),
+        "rotation": np.eye(3),
+        "size": 0.05
+    }
+}
+
+T_BASE_CAMERA = None
 CAMERA_POSE_COVARIANCE = np.diag([0.08**2, 0.08**2, math.radians(5)**2])
+MAX_REPROJECTION_ERROR_PX = 3.0
 POSE_GATE_CHI2 = 11.345  # 99% chi-square threshold for 3 dimensions
 GHOST_BOX_SIZE = np.array([0.14, 0.14, 0.05])
 GHOST_BOX_COLOR = np.array([0.0, 1.0, 0.0, 0.35], dtype=np.float32)
@@ -78,22 +83,49 @@ def angle_difference(a, b):
     return math.atan2(math.sin(a - b), math.cos(a - b))
 
 
-def correct_from_camera(ekf, camera, helpers, corners, ids):
-    """Fuse a calibrated wall-marker pose into the EKF."""
-    if ids is None:
+def camera_world_to_robot_pose(camera_position, camera_rotation, t_base_camera):
+    t_world_camera = np.eye(4)
+    t_world_camera[:3, :3] = camera_rotation
+    t_world_camera[:3, 3] = camera_position
+    t_world_base = t_world_camera @ np.linalg.inv(t_base_camera)
+    return np.array([
+        t_world_base[0, 3],
+        t_world_base[1, 3],
+        math.atan2(t_world_base[1, 0], t_world_base[0, 0]),
+    ])
+
+
+def correct_from_camera(ekf, camera, corners, ids):
+    """Fuse valid absolute landmark observations, if scene geometry is configured."""
+    if ids is None or T_BASE_CAMERA is None or not KNOWN_MARKERS:
         return 0
-    for marker_corners, marker_id in zip(corners, np.asarray(ids).reshape(-1)):
+    updates = 0
+    for i, raw_id in enumerate(np.asarray(ids).reshape(-1)):
+        marker_id = int(raw_id)
+        info = KNOWN_MARKERS.get(marker_id)
+        if info is None:
+            continue
         try:
-            measurement = helpers.robot_pose_from_wall_marker(
-                camera, int(marker_id), marker_corners, 0.4
-            )
-            if measurement is None:
+            observation = camera.estimate_marker_pose(corners[i], info["size"])
+            if observation.reprojection_error_px > MAX_REPROJECTION_ERROR_PX:
                 continue
-            ekf.fuse_pose(measurement, CAMERA_POSE_COVARIANCE, POSE_GATE_CHI2)
-            return int(bool(ekf.last_accepted))
+            camera_pos, camera_rot = camera.camera_pose_from_marker(
+                info["position"], info["rotation"], observation
+            )
+            measurement = camera_world_to_robot_pose(
+                camera_pos, camera_rot, T_BASE_CAMERA
+            )
+            innovation = measurement - ekf.state
+            innovation[2] = angle_difference(measurement[2], ekf.state[2])
+            S = ekf.P + CAMERA_POSE_COVARIANCE
+            distance2 = float(innovation @ np.linalg.solve(S, innovation))
+            if not np.isfinite(distance2) or distance2 > POSE_GATE_CHI2:
+                continue
+            ekf.fuse_pose(measurement, CAMERA_POSE_COVARIANCE)
+            updates += 1
         except (ValueError, KeyError, np.linalg.LinAlgError) as exc:
-            print(f"Camera EKF correction skipped for ID {int(marker_id)}: {exc}")
-    return 0
+            print(f"Camera EKF correction skipped for ID {marker_id}: {exc}")
+    return updates
 
 
 def add_ghost_box(scene, pose):
@@ -131,13 +163,17 @@ def main():
         action="store_true",
         help="disable EKF ghost-box rendering",
     )
+    parser.add_argument(
+        "--camera-fusion",
+        action="store_true",
+        help="enable absolute camera pose corrections (requires calibration)",
+    )
     args = parser.parse_args()
     xml_path = os.path.join(PROJECT_ROOT, "assets", "scene_turtlebot3_waffle_pi.xml")
     if not os.path.isfile(xml_path):
         raise FileNotFoundError(f"Missing XML: {xml_path}")
     model = mujoco.MjModel.from_xml_path(xml_path)
     data = mujoco.MjData(model)
-    track_helpers = load_track_helpers()
     camera = RaspiCamera(model)
     encoder = WheelEncoder(model)
     ekf = RobotEKF(
@@ -162,7 +198,15 @@ def main():
             raise RuntimeError(f"Missing or invalid LiDAR sensor: {name}")
         lidar_ids.append(sensor_id)
 
-    print("Camera EKF correction ENABLED")
+    if not args.camera_fusion:
+        print("Camera EKF correction DISABLED: use --camera-fusion after calibration.")
+    elif T_BASE_CAMERA is None or not KNOWN_MARKERS:
+        print("Camera EKF correction DISABLED: configure KNOWN_MARKERS and T_BASE_CAMERA.")
+        print("Wheel-encoder EKF prediction, tag tracking and docking remain enabled.")
+    else:
+        if np.asarray(T_BASE_CAMERA).shape != (4, 4):
+            raise ValueError("T_BASE_CAMERA must be a 4x4 matrix")
+        print("Camera EKF correction ENABLED")
 
     last_cam_time = -CAM_INTERVAL
     last_status_time = -STATUS_INTERVAL
@@ -256,9 +300,8 @@ def main():
                     signed_error = (center_x - camera.width / 2) / (camera.width / 2)
                     visible[marker_id] = (width, abs(signed_error), signed_error)
 
-            total_camera_updates += correct_from_camera(
-                ekf, camera, track_helpers, corners, ids
-            )
+            if args.camera_fusion:
+                total_camera_updates += correct_from_camera(ekf, camera, corners, ids)
             position = ekf.state[:2].copy()
             heading = float(ekf.state[2])
 
