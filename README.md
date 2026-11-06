@@ -8,7 +8,7 @@
 
 **Demo video (5 min):** TODO link
 
-**Platform:** Simulation (MuJoCo). Hardware: TODO yes/no
+**Platform:** Simulation (MuJoCo). Hardware: N/A
 
 ## 1. Overview
 
