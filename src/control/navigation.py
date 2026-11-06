@@ -367,7 +367,7 @@ class NavConfig:
     # Docking geometry (world frame).  The robot axle centre stops at
     # (dock_x, dock_stop_y) facing +y towards the marker.
     dock_x: float = 2.4
-    dock_stop_y: float = 2.30
+    dock_stop_y: float = 2.40
     station_face_y: float = 2.5  # marker / station front face (from the scene XML)
     dock_range_window: float = 0.3 # s of LiDAR samples averaged for the terminal range check
     approach_length: float = 1.1  # straight final leg before the stop pose
@@ -394,6 +394,7 @@ class NavConfig:
     done_tolerance: float = 0.03
     # Map.
     use_prior_obstacles: bool = True
+    visual_docking: bool = False
     inflation: float = 0.25
     resolution: float = 0.05
 
@@ -559,7 +560,8 @@ class Navigator:
             d_fwd = forward_distance(lidar_ranges)
             if np.isfinite(d_fwd):
                 self._dock_ranges.append(d_fwd)
-            if (len(self._dock_ranges) == self._dock_ranges.maxlen
+            if (not cfg.visual_docking
+                    and len(self._dock_ranges) == self._dock_ranges.maxlen
                     and float(np.mean(self._dock_ranges)) <= self.dock_range):
                 self.state = State.DONE
                 self.history.append("docked (LiDAR range to station)")
@@ -599,7 +601,8 @@ class Navigator:
         if self.s_ref >= path.length - 1e-9:
             self.settle_clock += self.dt
             pos_err = math.hypot(e[0], e[1])
-            if pos_err < cfg.done_tolerance or self.settle_clock > cfg.settle_time:
+            if (not cfg.visual_docking
+                    and (pos_err < cfg.done_tolerance or self.settle_clock > cfg.settle_time)):
                 self.state = State.DONE
                 self.history.append("docked (estimated pose)")
                 return NavOutput(0.0, 0.0, self.state, self.s_ref, ref_pose, e, front, self.replans)

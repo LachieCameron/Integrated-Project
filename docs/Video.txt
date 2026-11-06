@@ -1,0 +1,22 @@
+Encoders ───────┐
+                ├──> EKF ───> pose estimate ───> navigation/LQR ───> motors
+Gyro Z ─────────┘       ▲
+                        │
+Camera/ArUco ───────────┘
+
+LiDAR ───────────────────────────> obstacle avoidance/navigation
+Accelerometer ───────────────────> currently unused
+
+
+Wheel encoders ───────┐
+                      ├──> EKF ──> estimated [x, y, yaw]
+Gyro z ───────────────┘                 │
+                                        ▼
+Camera / ArUco pose ──> EKF correction ─┘
+                                        │
+LiDAR ────────────────> navigation ─────┤
+                                        ▼
+                         LQR controller
+                                        │
+                                        ▼
+                              wheel commands

@@ -22,6 +22,7 @@ from __future__ import annotations
 
 import argparse
 import contextlib
+import dataclasses
 import math
 import os
 import sys
@@ -36,6 +37,7 @@ if project_root not in sys.path:
 
 from src.control.lqr import body_frame_error
 from src.control.lqr import LQRTrajectoryTracker
+from src.control.docking import DockingConfig, VisualDockingController
 from src.control.navigation import NavConfig, Navigator, State, boxes_from_model
 from src.estimation.ekf import GATE_CHI2_3DOF_99, RobotEKF
 from src.kinematics.differential_drive import DifferentialDrive, wrap_angle
@@ -181,6 +183,7 @@ def run_trial(
     camera_dir: str | None = None,
     t_max: float = T_MAX,
     app_config: AppConfig | None = None,
+    docking_mode: str = "lqr",
 ) -> dict:
     """Simulate one docking run and return metrics plus time series.
 
@@ -196,6 +199,8 @@ def run_trial(
     config = app_config or load_config(os.path.join(project_root, "config", "default.yaml"))
     imu = IMUSensor(model) if config.ekf.gyro_enabled else None
     cfg = nav_config or nav_config_from_app(config, unknown_obstacles)
+    if docking_mode == "visual":
+        cfg = dataclasses.replace(cfg, visual_docking=True)
     tracker = LQRTrajectoryTracker(
         CTRL_DT,
         q_diag=config.lqr.q,
@@ -204,9 +209,10 @@ def run_trial(
         w_max=config.lqr.max_angular_velocity,
     )
     nav = Navigator(model, CTRL_DT, cfg, tracker=tracker)
+    visual_docking = VisualDockingController(DockingConfig()) if docking_mode == "visual" else None
     cam = None
     camera_period_steps = 1
-    if camera or camera_dir or aruco_fusion:
+    if camera or camera_dir or aruco_fusion or docking_mode == "visual":
         import cv2
         from src.sensing.cam import RaspiCamera
         calibration_path = config.camera.calibration_file
@@ -245,6 +251,7 @@ def run_trial(
     t0_wall = time.time()
     steps = int(t_max / CTRL_DT)
     out = None
+    visible_dock = None
     for k in range(steps):
         # ---- sensing -----------------------------------------------------------------
         d_l, d_r, _, _ = encoder.step(data)
@@ -267,6 +274,21 @@ def run_trial(
         if cam is not None and k % camera_period_steps == 0:
             frame = cam.capture_cv_frame(data)
             corners, marker_ids, shown = cam.detect_markers(frame)
+            visible_dock = None
+            if docking_mode == "visual" and marker_ids is not None:
+                for marker_corners, marker_id in zip(corners, marker_ids.reshape(-1)):
+                    if int(marker_id) != FINE_DOCK_MARKER_ID:
+                        continue
+                    marker = np.asarray(marker_corners).reshape(4, 2)
+                    center_error = (
+                        float(np.mean(marker[:, 0])) - cam.width / 2.0
+                    ) / (cam.width / 2.0)
+                    visible_dock = (
+                        float(np.linalg.norm(marker[1] - marker[0])),
+                        abs(center_error),
+                        center_error,
+                    )
+                    break
             if aruco_fusion and marker_ids is not None:
                 for marker_corners, marker_id in zip(corners, marker_ids.reshape(-1)):
                     measurement = robot_pose_from_wall_marker(
@@ -281,6 +303,22 @@ def run_trial(
 
         # ---- navigation + LQR -----------------------------------------------------------
         out = nav.update(pose_est, ranges)
+        if visual_docking is not None and visible_dock is not None:
+            width, center_error, signed_error = visible_dock
+            v_visual, w_visual, docked = visual_docking.command(
+                width,
+                center_error,
+                signed_error,
+                out.front_range,
+                pose_est[2],
+                math.pi / 2.0,
+            )
+            out.v, out.w = v_visual, w_visual
+            if docked:
+                nav.state = State.DONE
+                out.state = State.DONE
+        elif visual_docking is not None and out.state != State.DONE:
+            visual_docking.reset()
         wl, wr = drive.twist_to_wheel_speeds(out.v, out.w)
         data.ctrl[0], data.ctrl[1] = wl, wr
 
@@ -466,6 +504,12 @@ def main():
     ap.add_argument("--viewer", action="store_true")
     ap.add_argument("--camera", action="store_true", help="show the robot camera with ArUco detections (needs a display)")
     ap.add_argument("--aruco-fusion", action="store_true", help="use wall ArUco poses as EKF corrections")
+    ap.add_argument(
+        "--docking-mode",
+        choices=("lqr", "visual"),
+        default="lqr",
+        help="use Navigator LQR docking, or shared fine-tag visual docking",
+    )
     ap.add_argument("--save-camera", type=str, default=None, help="save camera frames (every 0.2 s) to this directory")
     args = ap.parse_args()
 
@@ -496,6 +540,7 @@ def main():
                       unknown_obstacles=args.unknown_obstacles, ekf_wheel_base=args.ekf_wheel_base,
                       camera=args.camera, camera_dir=args.save_camera,
                       aruco_fusion=args.aruco_fusion,
+                      docking_mode=args.docking_mode,
                       t_max=config.evaluation.timeout_s, app_config=config)
         if args.viewer:
             from mujoco import viewer as mj_viewer

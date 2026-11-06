@@ -28,6 +28,7 @@ from src.sensing.cam import RaspiCamera
 from src.sensing.wheel_encoder import WheelEncoder
 from src.estimation.ekf import RobotEKF
 from src.control.Tag_follow import DiffDriveController, TagFollower
+from src.control.docking import DockingConfig, VisualDockingController, pose_command
 from randomize_scene import randomize_scene
 
 
@@ -65,11 +66,19 @@ ID99_LOST_FRAMES = 5
 ID99_REACQUIRE_FRAMES = 5
 ID99_SEARCH_W = 0.16
 ID99_CENTER_BEFORE_DRIVE = 0.10
+VISUAL_CENTER_DEADBAND = 0.04
+VISUAL_HEADING_CORRECTION_THRESHOLD = math.radians(8.0)
 DOCK_CENTER_TOLERANCE = 0.12
 DOCK_COMPLETE_DISTANCE = 0.18
 DOCK_HARD_STOP = 0.12
 DOCK_MIN_MARKER_WIDTH_PX = 100.0
 DOCK_CONFIRM_FRAMES = 3
+PRE_DOCK_POSE = np.array([2.4, 2.15, math.pi / 2.0])
+PRE_DOCK_POSITION_TOLERANCE = 0.10
+PRE_DOCK_HEADING_TOLERANCE = math.radians(8.0)
+DOCK_HEADING_TOLERANCE = math.radians(4.0)
+PRE_DOCK_MAX_V = 0.10
+PRE_DOCK_MAX_W = 0.45
 
 CAMERA_POSE_COVARIANCE = np.diag([0.08**2, 0.08**2, math.radians(5)**2])
 POSE_GATE_CHI2 = 11.345  # 99% chi-square threshold for 3 dimensions
@@ -156,6 +165,12 @@ def main():
     parser.add_argument("--scene", type=str, default=os.path.join(
         PROJECT_ROOT, "assets", "scene_turtlebot3_waffle_pi.xml"
     ))
+    parser.add_argument(
+        "--docking-mode",
+        choices=("pose-visual", "legacy-pixel"),
+        default="pose-visual",
+        help="pose pre-dock then visual servo, or the previous pixel-following logic",
+    )
     args = parser.parse_args()
     xml_path = os.path.abspath(args.scene)
     if not os.path.isfile(xml_path):
@@ -178,6 +193,11 @@ def main():
         image_width=camera.width,
         target_width_pixels=COARSE_TARGET_WIDTH_PX,
     )
+    visual_docking = VisualDockingController(DockingConfig(
+        target_width_px=DOCK_TARGET_WIDTH_PX,
+        max_linear_v=0.06,
+        max_angular_w=0.18,
+    ))
     if model.nu < 2:
         raise RuntimeError("Expected two wheel actuators")
 
@@ -200,6 +220,7 @@ def main():
     turn_direction = 1
     forward_start = np.zeros(2)
     docking_phase = False
+    dock_phase = "TRACK_TAG"
     charged = False
     id99_seen_frames = 0
     id99_lost_frames = 0
@@ -222,7 +243,7 @@ def main():
     def control_loop(model, data):
         nonlocal last_cam_time, last_status_time, last_dock_debug
         nonlocal desired_v, desired_w, mode, turn_start_heading, turn_direction
-        nonlocal forward_start, docking_phase, charged, id99_seen_frames
+        nonlocal forward_start, docking_phase, dock_phase, charged, id99_seen_frames
         nonlocal id99_lost_frames, id99_reacquire_frames, last_id99_signed_error
         nonlocal dock_confirm_count, total_camera_updates, last_message_mode
 
@@ -241,7 +262,12 @@ def main():
             data.ctrl[0] = data.ctrl[1] = 0.0
             return
 
-        if mode == "FOLLOW" and not docking_phase and desired_v > 0 and front < CLEAR_DISTANCE:
+        if (
+            mode == "FOLLOW"
+            and (not docking_phase or dock_phase == "PRE_DOCK")
+            and desired_v > 0
+            and front < CLEAR_DISTANCE
+        ):
             mode = "AVOID_TURN"
             turn_start_heading = heading
             turn_direction = 1 if left >= right else -1
@@ -289,24 +315,29 @@ def main():
             position = ekf.state[:2].copy()
             heading = float(ekf.state[2])
 
-            id99_visible = (
-                DOCK_ID in visible
-                and visible[DOCK_ID][0] >= ID99_SWITCH_MIN_WIDTH_PX
-            )
-            if not docking_phase and follower.state == "TRACKING":
-                id99_seen_frames = id99_seen_frames + 1 if id99_visible else 0
-                if id99_seen_frames >= ID99_CONFIRM_FRAMES:
+            dock_tag_visible = any(tag_id in visible for tag_id in (COARSE_ID, DOCK_ID))
+            if not docking_phase and dock_tag_visible:
+                id99_seen_frames = id99_seen_frames + 1 if DOCK_ID in visible else 0
+                if id99_seen_frames >= ID99_CONFIRM_FRAMES or COARSE_ID in visible:
                     docking_phase = True
-                    follower.target_ids = (DOCK_ID,)
-                    follower.target_id = DOCK_ID
-                    follower.target_width_pixels = DOCK_TARGET_WIDTH_PX
-                    print(f"[{data.time:.2f}s] SWITCH ID {COARSE_ID} -> ID {DOCK_ID}")
+                    dock_phase = (
+                        "PRE_DOCK"
+                        if args.docking_mode == "pose-visual"
+                        else "LEGACY_PIXEL"
+                    )
+                    if dock_phase == "LEGACY_PIXEL":
+                        follower.target_ids = (DOCK_ID,)
+                        follower.target_id = DOCK_ID
+                        follower.target_width_pixels = DOCK_TARGET_WIDTH_PX
+                    follower.state = "TRACKING"
+                    print(f"[{data.time:.2f}s] DOCK TAG -> {dock_phase}")
 
+            id99_visible = DOCK_ID in visible and visible[DOCK_ID][0] >= ID99_SWITCH_MIN_WIDTH_PX
             if docking_phase:
-                if id99_visible:
+                if id99_visible or COARSE_ID in visible:
                     id99_lost_frames = 0
                     id99_reacquire_frames += 1
-                    last_id99_signed_error = visible[DOCK_ID][2]
+                    last_id99_signed_error = visible[DOCK_ID if id99_visible else COARSE_ID][2]
                 else:
                     id99_lost_frames += 1
                     id99_reacquire_frames = 0
@@ -320,42 +351,100 @@ def main():
                         turn_start_heading = heading
                         turn_direction = 1 if left >= right else -1
                         desired_v = desired_w = 0.0
-                elif not id99_visible or id99_reacquire_frames < ID99_REACQUIRE_FRAMES:
-                    desired_v = 0.0
-                    if id99_lost_frames <= ID99_LOST_FRAMES:
-                        desired_w = 0.0
-                    else:
-                        desired_w = (
-                            -ID99_SEARCH_W if last_id99_signed_error > 0.05
-                            else ID99_SEARCH_W
-                        )
-                else:
-                    width, center_error, signed_error = visible[DOCK_ID]
-                    desired_w = float(np.clip(
-                        -follower.Kp_angular * signed_error, -0.35, 0.35
-                    ))
-                    if center_error > ID99_CENTER_BEFORE_DRIVE:
+                elif dock_phase == "LEGACY_PIXEL":
+                    if not id99_visible or id99_reacquire_frames < ID99_REACQUIRE_FRAMES:
                         desired_v = 0.0
-                    elif width < DOCK_TARGET_WIDTH_PX:
-                        desired_v = float(np.clip(
-                            follower.Kp_linear * (DOCK_TARGET_WIDTH_PX - width)
-                            / DOCK_TARGET_WIDTH_PX, 0.0, 0.08
+                        if id99_lost_frames <= ID99_LOST_FRAMES:
+                            desired_w = 0.0
+                        else:
+                            desired_w = (
+                                -ID99_SEARCH_W if last_id99_signed_error > 0.05
+                                else ID99_SEARCH_W
+                            )
+                    else:
+                        width, center_error, signed_error = visible[DOCK_ID]
+                        desired_w = 0.0 if center_error <= VISUAL_CENTER_DEADBAND else float(np.clip(
+                            -follower.Kp_angular * signed_error, -0.25, 0.25
                         ))
-                    else:
-                        desired_v = 0.0
+                        if center_error > ID99_CENTER_BEFORE_DRIVE:
+                            desired_v = 0.0
+                        elif width < DOCK_TARGET_WIDTH_PX:
+                            desired_v = float(np.clip(
+                                follower.Kp_linear
+                                * (DOCK_TARGET_WIDTH_PX - width)
+                                / DOCK_TARGET_WIDTH_PX,
+                                0.0,
+                                0.08,
+                            ))
+                        else:
+                            desired_v = 0.0
 
-                    reached = (
-                        DOCK_HARD_STOP <= front <= DOCK_COMPLETE_DISTANCE
-                        and width >= DOCK_MIN_MARKER_WIDTH_PX
+                        reached = (
+                            DOCK_HARD_STOP <= front <= DOCK_COMPLETE_DISTANCE
+                            and width >= DOCK_MIN_MARKER_WIDTH_PX
+                        )
+                        aligned = center_error <= DOCK_CENTER_TOLERANCE
+                        dock_confirm_count = (
+                            dock_confirm_count + 1 if reached and aligned else 0
+                        )
+                        if data.time - last_dock_debug >= STATUS_INTERVAL:
+                            print(
+                                f"[{data.time:.2f}s] LEGACY ID99 width={width:.1f}px "
+                                f"center_error={center_error:.3f} "
+                                f"confirm={dock_confirm_count}/{DOCK_CONFIRM_FRAMES}"
+                            )
+                            last_dock_debug = float(data.time)
+                        if dock_confirm_count >= DOCK_CONFIRM_FRAMES:
+                            charged = True
+                            mode = "CHARGED"
+                            follower.state = "CHARGED"
+                            desired_v = desired_w = 0.0
+                            print(
+                                f"[{data.time:.2f}s] LEGACY PIXEL DOCK COMPLETE; "
+                                "motors stopped"
+                            )
+                elif dock_phase == "PRE_DOCK":
+                    desired_v, desired_w, pre_dock_reached = pose_command(
+                        position.tolist() + [heading],
+                        PRE_DOCK_POSE,
+                        PRE_DOCK_MAX_V,
+                        PRE_DOCK_MAX_W,
                     )
-                    aligned = center_error <= DOCK_CENTER_TOLERANCE
-                    dock_confirm_count = dock_confirm_count + 1 if reached and aligned else 0
+                    if pre_dock_reached:
+                        dock_phase = "VISUAL_APPROACH"
+                        visual_docking.reset()
+                        desired_v = desired_w = 0.0
+                        print(f"[{data.time:.2f}s] PRE_DOCK reached; VISUAL_APPROACH")
+                    if desired_v > 0.0 and front < CLEAR_DISTANCE:
+                        mode = "AVOID_TURN"
+                        turn_start_heading = heading
+                        turn_direction = 1 if left >= right else -1
+                        desired_v = desired_w = 0.0
+                elif dock_phase == "VISUAL_APPROACH" and not id99_visible:
+                    visual_docking.reset()
+                    dock_confirm_count = 0
+                    desired_v = 0.0
+                    desired_w = (
+                        -ID99_SEARCH_W if last_id99_signed_error > 0.05
+                        else ID99_SEARCH_W
+                    )
+                elif dock_phase == "VISUAL_APPROACH" and id99_visible:
+                    width, center_error, signed_error = visible[DOCK_ID]
+                    desired_v, desired_w, docked = visual_docking.command(
+                        width,
+                        center_error,
+                        signed_error,
+                        front,
+                        heading,
+                        PRE_DOCK_POSE[2],
+                    )
+                    dock_confirm_count = visual_docking.confirm_count
                     if data.time - last_dock_debug >= STATUS_INTERVAL:
                         print(f"[{data.time:.2f}s] ID99 width={width:.1f}px "
                               f"center_error={center_error:.3f} "
                               f"confirm={dock_confirm_count}/{DOCK_CONFIRM_FRAMES}")
                         last_dock_debug = float(data.time)
-                    if dock_confirm_count >= DOCK_CONFIRM_FRAMES:
+                    if docked:
                         charged = True
                         mode = "CHARGED"
                         follower.state = "CHARGED"
