@@ -43,6 +43,7 @@ from src.sensing.lidar_scan import Lidar
 from src.sensing.IMU import IMUSensor
 from src.sensing.wheel_encoder import WheelEncoder
 from src.utils.config import AppConfig, load_config
+from randomize_scene import randomize_scene
 
 SCENE = os.path.join(project_root, "assets", "scene_turtlebot3_waffle_pi.xml")
 CTRL_DT = 0.02          # 50 Hz control / estimation rate
@@ -446,6 +447,10 @@ def summarise(all_metrics: list[dict]) -> str:
 def main():
     ap = argparse.ArgumentParser(description=__doc__, formatter_class=argparse.RawDescriptionHelpFormatter)
     ap.add_argument("--config", type=str, default=os.path.join(project_root, "config", "default.yaml"))
+    ap.add_argument("--scene", type=str, default=SCENE, help="MuJoCo scene XML to load")
+    ap.add_argument("--random-scene", action="store_true", help="randomize obstacle geoms in memory")
+    ap.add_argument("--scene-seed", type=int, default=0)
+    ap.add_argument("--obstacle-count", type=int, default=3)
     ap.add_argument("--trials", type=int, default=None)
     ap.add_argument("--seed", type=int, default=None)
     ap.add_argument("--fixed-start", action="store_true", help="start at the origin facing +x (default for 1 trial)")
@@ -473,7 +478,14 @@ def main():
         if args.odom_scale_err is None
         else args.odom_scale_err
     )
-    model = mujoco.MjModel.from_xml_path(SCENE)
+    scene_path = args.scene
+    if not os.path.isabs(scene_path):
+        scene_path = os.path.join(project_root, scene_path)
+    if not os.path.isfile(scene_path):
+        raise FileNotFoundError(f"Missing scene XML: {scene_path}")
+    model = mujoco.MjModel.from_xml_path(scene_path)
+    if args.random_scene:
+        randomize_scene(model, seed=args.scene_seed, count=args.obstacle_count)
     random_start = args.random_start or (trials > 1 and not args.fixed_start)
     rng = np.random.default_rng(seed)
     results = []

@@ -20,11 +20,15 @@ import numpy as np
 PROJECT_ROOT = os.path.abspath(os.path.join(os.path.dirname(__file__), ".."))
 if PROJECT_ROOT not in sys.path:
     sys.path.insert(0, PROJECT_ROOT)
+SCRIPTS_ROOT = os.path.join(PROJECT_ROOT, "scripts")
+if SCRIPTS_ROOT not in sys.path:
+    sys.path.insert(0, SCRIPTS_ROOT)
 
 from src.sensing.cam import RaspiCamera
 from src.sensing.wheel_encoder import WheelEncoder
 from src.estimation.ekf import RobotEKF
 from src.control.Tag_follow import DiffDriveController, TagFollower
+from randomize_scene import randomize_scene
 
 
 def load_track_helpers():
@@ -132,12 +136,34 @@ def main():
         action="store_true",
         help="disable EKF ghost-box rendering",
     )
+    parser.add_argument(
+        "--random-scene",
+        action="store_true",
+        help="generate a randomized obstacle scene before starting",
+    )
+    parser.add_argument(
+        "--scene-seed",
+        type=int,
+        default=0,
+        help="seed for randomized obstacle placement",
+    )
+    parser.add_argument(
+        "--obstacle-count",
+        type=int,
+        default=3,
+        help="number of randomized obstacles",
+    )
+    parser.add_argument("--scene", type=str, default=os.path.join(
+        PROJECT_ROOT, "assets", "scene_turtlebot3_waffle_pi.xml"
+    ))
     args = parser.parse_args()
-    xml_path = os.path.join(PROJECT_ROOT, "assets", "scene_turtlebot3_waffle_pi.xml")
+    xml_path = os.path.abspath(args.scene)
     if not os.path.isfile(xml_path):
         raise FileNotFoundError(f"Missing XML: {xml_path}")
     model = mujoco.MjModel.from_xml_path(xml_path)
     data = mujoco.MjData(model)
+    if args.random_scene:
+        randomize_scene(model, data, args.scene_seed, args.obstacle_count)
     track_helpers = load_track_helpers()
     camera = RaspiCamera(model)
     encoder = WheelEncoder(model)
