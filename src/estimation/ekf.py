@@ -162,9 +162,16 @@ class RobotEKF:
 
         self.state += gain @ innovation
         self.state[2] = wrap_angle(float(self.state[2]))
+
+        # identity = np.eye(3)
+        # self.P = (identity - gain) @ self.P
+        # self.P = 0.5 * (self.P + self.P.T)
         identity = np.eye(3)
-        self.P = (identity - gain) @ self.P
+        A = identity - gain
+
+        self.P = (A @ self.P @ A.T + gain @ covariance @ gain.T)
         self.P = 0.5 * (self.P + self.P.T)
+        
         return self.state.copy()
 
     def correct_pose(

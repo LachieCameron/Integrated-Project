@@ -139,8 +139,8 @@ class RaspiCamera:
             raise ValueError("camera_matrix must be a finite 3x3 matrix")
         distortion = (
             np.zeros((5, 1), dtype=float)
-            if self.distortion is None
-            else self.distortion
+            # if self.distortion is None
+            # else self.distortion
         )
         half = marker_size_m / 2.0
         object_points = np.array(
