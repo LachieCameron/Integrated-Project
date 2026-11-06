@@ -11,6 +11,9 @@ Team: Lachlan Cameron, Jonathan Wijaya, William Hsu
 
 TODO: 3 to 4 sentences. What the robot does, the task, and the key result (e.g. docking success rate and RMSE from Section 6).
 
+Autonomous Docking TurtleBot3 Project where demonstrated using MuJoCo simulation. The robot integrates wheel encoder odometry, camera-based ArUco marker detection, LiDAR obstacle detection, Extended Kalman Filter (EKF) state estimation, and Linear Quadratic Regulator (LQR) trajectory tracking. 
+The system initially detects ArUco marker ID 0 and uses marker ID 99 for fine docking alignment. The EKF estimates the robot's position and orientation, while LQR-based navigation controls its approach toward the pre-docking location.
+
 ## 2. Install and run
 
 See [SETUP.md](SETUP.md) for the environment setup on Mac and Windows.
