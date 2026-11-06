@@ -33,7 +33,8 @@ TODO: block diagram (simulator, sensors, EKF, LQR, back to simulator).
 - Assumptions: TODO
 - Controllability and observability analysis: TODO. Include which states are observable from which sensors, and what happens when the marker leaves the camera view.
 
-### 4.1 State Vector
+### 4.1 State, input and equations
+** State Vector:**
 $$
 \mathbf{x} =
 \begin{bmatrix}
@@ -42,6 +43,49 @@ y \\
 \theta
 \end{bmatrix}
 $$
+
+**Control Vector:**
+$$
+\mathbf{u} =
+\begin{bmatrix}
+v \\
+\omega
+\end{bmatrix}
+$$
+
+Where:
+- $v$: Linear velocity (m/s).
+- $\omega$: Angular velocity (rad/s).
+
+**Differential-drive kinematic equations:**
+
+$$
+\dot{x} = v\cos\theta
+$$
+
+$$
+\dot{y} = v\sin\theta
+$$
+
+$$
+\dot{\theta} = \omega
+$$
+
+$$
+v = \frac{r}{2}(\omega_R+\omega_L)
+$$
+
+$$
+\omega = \frac{r}{L}(\omega_R-\omega_L)
+$$
+
+Where:
+- $r$: Wheel radius (m).
+- $L$: Distance between the left and right wheels (m).
+- $\omega_R$: Right wheel angular velocity (rad/s).
+- $\omega_L$: Left wheel angular velocity (rad/s).
+
+
 
 -
 -
