@@ -20,6 +20,24 @@ The system initially detects ArUco marker ID 0 and uses marker ID 99 for fine do
 
 See [SETUP.md](SETUP.md) for the environment setup on Mac and Windows.
 
+The primary integrated docking experiment is:
+
+```bash
+python3 tests/ekf_docking_test.py
+```
+
+Useful options include:
+
+```bash
+python3 tests/ekf_docking_test.py --random-scene --scene-seed 92 --obstacle-count 3
+python3 tests/ekf_docking_test.py --docking-mode legacy-pixel
+python3 tests/ekf_docking_test.py --no-ghost
+```
+
+Scene randomisation changes the compiled MuJoCo model in memory; it does not
+modify or generate XML files. The ghost box shows the EKF pose estimate in the
+passive MuJoCo viewer and can be disabled with `--no-ghost`.
+
 ## 3. System architecture
 
 Constraint: the controller uses the estimated state only. Simulator ground truth is used for evaluation only.
@@ -181,7 +199,9 @@ The main obstacle avoidance parameters are:
 
 When an obstacle is detected, the robot can stop, turn toward the clearer direction and move forward to bypass it.
 
-During pre-docking, LiDAR measurements are also supplied to the navigation controller.
+During pre-docking, LiDAR measurements are used to interrupt the
+`PreDockLQR` controller and run the obstacle-avoidance state machine. The LQR
+controller is reset after avoidance so it replans from the updated EKF pose.
 
 ### 5.5 Sensor Noise Characterisation
 
@@ -240,7 +260,7 @@ The project uses a hybrid control system consisting of ArUco marker following, L
 | Obstacle avoidance | LiDAR-based navigation | Avoid obstacles during movement |
 | Pre-docking | LQR trajectory tracking | Navigate to the pre-docking pose |
 | Fine docking | Visual proportional control | Align with ArUco marker ID 99 |
-| Docking completion | Stop command | Stop wheel motion when docking is completed |
+| Docking completion | LiDAR stop and confirmation | Stop at a front-LiDAR range of 0.14 m and enter simulated `CHARGED` |
 
 The LQR controller operates during the PRE_DOCK stage and uses the EKF-estimated robot pose as feedback.
 
@@ -338,7 +358,9 @@ During visual docking, the robot follows ArUco marker ID 99 and estimates proxim
 
 The visual controller adjusts linear and angular velocities to align the robot with the charging station.
 
-When the configured docking-completion conditions are met, the robot stops and enters the simulated CHARGED state.
+When the front LiDAR reaches 0.14 m during the latched straight approach,
+the robot stops and enters the simulated `CHARGED` state. Legacy pixel mode
+also requires its configured multi-frame docking confirmation.
 
 In the final docking stage, LQR is not used; the robot uses visual feedback with LiDAR logic instead.
 
@@ -368,7 +390,9 @@ Avoidance sequence:
 5. **Obstacle Rechecking:** If another obstacle is detected within the stop distance, the robot returns to AVOID_TURN.
 6. **Navigation Resumption:** Once the avoidance movement is completed, the robot returns to normal navigation.
 
-During the PRE_DOCK stage, LiDAR readings are supplied directly to the Navigator subsystem, which handles navigation and obstacle-related decisions.
+During the PRE_DOCK stage, LiDAR readings interrupt the `PreDockLQR`
+controller and select the clearer side for the avoidance turn. After the
+avoidance segment, the pre-dock LQR controller replans from the EKF estimate.
 
 ### 8.2 Integration Testing
 
