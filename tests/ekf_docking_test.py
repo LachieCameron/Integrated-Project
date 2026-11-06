@@ -5,9 +5,11 @@ Camera-to-EKF fusion is enabled only after KNOWN_MARKERS and T_BASE_CAMERA
 are populated with verified scene geometry. No MuJoCo ground truth is used
 for navigation. The CHARGED flag is a simulated docking-success indication.
 """
+import argparse
 import math
 import os
 import sys
+import time
 
 import cv2
 import mujoco
@@ -53,7 +55,8 @@ DOCK_HARD_STOP = 0.12
 DOCK_MIN_MARKER_WIDTH_PX = 100.0
 DOCK_CONFIRM_FRAMES = 3
 
-# for calibration, use the parameters from the .xml file
+# These values are retained for calibration experiments only. The marker
+# rotations and camera extrinsics must be verified before enabling fusion.
 KNOWN_MARKERS = {
     0: {
         "position": np.array([2.4, 2.5, 0.3]),
@@ -67,11 +70,13 @@ KNOWN_MARKERS = {
     }
 }
 
-# T_BASE_CAMERA = None
-T_BASE_CAMERA = np.eye(4)
+T_BASE_CAMERA = None
 CAMERA_POSE_COVARIANCE = np.diag([0.08**2, 0.08**2, math.radians(5)**2])
 MAX_REPROJECTION_ERROR_PX = 3.0
 POSE_GATE_CHI2 = 11.345  # 99% chi-square threshold for 3 dimensions
+GHOST_BOX_SIZE = np.array([0.14, 0.14, 0.05])
+GHOST_BOX_COLOR = np.array([0.0, 1.0, 0.0, 0.35], dtype=np.float32)
+BASE_VISUAL_CENTER_OFFSET = np.array([-0.064, 0.0])
 
 
 def angle_difference(a, b):
@@ -123,7 +128,47 @@ def correct_from_camera(ekf, camera, corners, ids):
     return updates
 
 
+def add_ghost_box(scene, pose):
+    """Render a translucent box at an EKF pose in the viewer user scene."""
+    index = scene.ngeom
+    scene.ngeom += 1
+    yaw = float(pose[2])
+    cosine, sine = math.cos(yaw), math.sin(yaw)
+    rotation = np.array(
+        [cosine, -sine, 0.0, sine, cosine, 0.0, 0.0, 0.0, 1.0],
+        dtype=np.float32,
+    )
+    offset = np.array(
+        [
+            cosine * BASE_VISUAL_CENTER_OFFSET[0]
+            - sine * BASE_VISUAL_CENTER_OFFSET[1],
+            sine * BASE_VISUAL_CENTER_OFFSET[0]
+            + cosine * BASE_VISUAL_CENTER_OFFSET[1],
+        ]
+    )
+    mujoco.mjv_initGeom(
+        scene.geoms[index],
+        type=mujoco.mjtGeom.mjGEOM_BOX,
+        size=GHOST_BOX_SIZE,
+        pos=[float(pose[0] + offset[0]), float(pose[1] + offset[1]), 0.05],
+        mat=rotation,
+        rgba=GHOST_BOX_COLOR,
+    )
+
+
 def main():
+    parser = argparse.ArgumentParser()
+    parser.add_argument(
+        "--no-ghost",
+        action="store_true",
+        help="disable EKF ghost-box rendering",
+    )
+    parser.add_argument(
+        "--camera-fusion",
+        action="store_true",
+        help="enable absolute camera pose corrections (requires calibration)",
+    )
+    args = parser.parse_args()
     xml_path = os.path.join(PROJECT_ROOT, "assets", "scene_turtlebot3_waffle_pi.xml")
     if not os.path.isfile(xml_path):
         raise FileNotFoundError(f"Missing XML: {xml_path}")
@@ -153,7 +198,9 @@ def main():
             raise RuntimeError(f"Missing or invalid LiDAR sensor: {name}")
         lidar_ids.append(sensor_id)
 
-    if T_BASE_CAMERA is None or not KNOWN_MARKERS:
+    if not args.camera_fusion:
+        print("Camera EKF correction DISABLED: use --camera-fusion after calibration.")
+    elif T_BASE_CAMERA is None or not KNOWN_MARKERS:
         print("Camera EKF correction DISABLED: configure KNOWN_MARKERS and T_BASE_CAMERA.")
         print("Wheel-encoder EKF prediction, tag tracking and docking remain enabled.")
     else:
@@ -253,7 +300,8 @@ def main():
                     signed_error = (center_x - camera.width / 2) / (camera.width / 2)
                     visible[marker_id] = (width, abs(signed_error), signed_error)
 
-            total_camera_updates += correct_from_camera(ekf, camera, corners, ids)
+            if args.camera_fusion:
+                total_camera_updates += correct_from_camera(ekf, camera, corners, ids)
             position = ekf.state[:2].copy()
             heading = float(ekf.state[2])
 
@@ -365,9 +413,24 @@ def main():
         data.ctrl[0] = float(np.clip(left_wheel, -MAX_WHEEL_SPEED, MAX_WHEEL_SPEED))
         data.ctrl[1] = float(np.clip(right_wheel, -MAX_WHEEL_SPEED, MAX_WHEEL_SPEED))
 
+    def run_with_ghost():
+        with mujoco.viewer.launch_passive(model, data) as viewer:
+            while viewer.is_running():
+                start = time.time()
+                mujoco.mj_step(model, data)
+                viewer.user_scn.ngeom = 0
+                add_ghost_box(viewer.user_scn, ekf.state)
+                viewer.sync()
+                time.sleep(
+                    max(0.0, model.opt.timestep - (time.time() - start))
+                )
+
     try:
         mujoco.set_mjcb_control(control_loop)
-        mujoco.viewer.launch(model, data)
+        if args.no_ghost:
+            mujoco.viewer.launch(model, data)
+        else:
+            run_with_ghost()
     except KeyboardInterrupt:
         print("Simulation interrupted")
     finally:
