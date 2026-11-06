@@ -88,10 +88,9 @@ Where:
 - $\omega_R$: Right wheel angular velocity (rad/s).
 - $\omega_L$: Left wheel angular velocity (rad/s).
 
+### 4.2 Assumptions
 
-
--
--
+### 4.3 Controllability and observability analysis
 
 ## 5. Sensing and calibration (Part B)
 
@@ -99,6 +98,145 @@ Where:
 - Camera calibration and ArUco detection: TODO
 - LiDAR processing: TODO
 - Noise characterisation: TODO
+
+## 5. Sensing and Calibration (Part B)
+
+### 5.1 Sensor Configuration
+
+three main sensors implemented for navigation, localisation and obstacle avoidance.
+
+| Sensor | Measurement | Purpose |
+|---|---|---|
+| Wheel Encoders | Left and right wheel displacement | Predict robot motion in the EKF |
+| RGB Camera | ArUco marker ID, corners and relative pose | Detect navigation targets and correct the EKF estimate |
+| LiDAR | Distance to nearby obstacles | Detect obstacles and support collision avoidance |
+
+### 5.2 Coordinate Frames
+
+The system uses four coordinate frames:
+
+1. **World Frame:** Global reference for the robot's position and navigation targets.
+2. **Robot Base Frame:** Local coordinate system for TurtleBot3.
+3. **Camera Frame:** Coordinate system used for camera measurements and marker detection.
+4. **ArUco Marker Frame:** Local coordinate system attached to each marker.
+
+The coordinate transformation from the camera to the robot and world frames is required to convert marker observations into global robot pose measurements.
+
+The relationship between coordinate frames can be represented as:
+
+$$
+T_{WM} = T_{WB}T_{BC}T_{CM}
+$$
+
+Where:
+
+- $T_{WM}$: Marker pose in the world frame.
+- $T_{WB}$: Robot base pose in the world frame.
+- $T_{BC}$: Camera pose relative to the robot base.
+- $T_{CM}$: Marker pose relative to the camera.
+
+Rearranging gives:
+
+$$
+T_{WB}=T_{WM}T_{CM}^{-1}T_{BC}^{-1}
+$$
+
+This allows the camera measurement to be transformed into the robot's global pose for EKF correction.
+
+### 5.3 Camera Calibration and ArUco Detection
+
+The RGB camera is used to detect ArUco markers and estimate the robot's pose relative to known landmarks.
+
+The camera detection process consists of:
+
+1. Detects ArUco markers using OpenCV.
+2. Extracting marker IDs and corner coordinates.
+3. Estimating marker pose using camera calibration parameters and known marker dimensions.
+4. Providing the resulting robot pose measurement to the EKF.
+
+The system uses:
+
+| Parameter | Value |
+|---|---|
+| ArUco dictionary | `DICT_5X5_100` |
+| Coarse navigation marker | ID 0 |
+| Fine docking marker | ID 99 |
+| Camera update interval | 1/30 s |
+| Coarse marker size | 0.20 m |
+| Fine marker size | 0.05 m |
+
+Camera calibration requires the intrinsic matrix:
+
+$$
+K=
+\begin{bmatrix}
+f_x & 0 & c_x\\
+0 & f_y & c_y\\
+0 & 0 & 1
+\end{bmatrix}
+$$
+
+Where:
+
+- $f_x,f_y$: Camera focal lengths in pixels.
+- $c_x,c_y$: Principal point coordinates.
+
+The camera model may also include distortion coefficients to correct lens distortion.
+
+The camera measurement is accepted by the EKF only when it passes the innovation-gating test.
+
+### 5.4 LiDAR Processing
+
+LiDAR are implemented for obstacle detection and avoidance across robot's forward facing region. It was integrated across -90° to +90° at 15° intervals.
+
+The measurement then grouped into three different sectors, where:
+
+| Sector | Angular Range | Purpose |
+|---|---|---|
+| Front | -30° to +30° | Detect obstacles directly ahead |
+| Left | +45° to +90° | Evaluate clearance on the left |
+| Right | -90° to -45° | Evaluate clearance on the right |
+
+The minimum valid distance in each sector is used for obstacle detection.
+
+The main obstacle avoidance parameters are:
+
+| Parameter | Value |
+|---|---|
+| Stop distance | 0.20 m |
+| Clearance distance | 0.40 m |
+| Avoidance distance | 0.50 m |
+| Avoidance turn angle | 35° |
+| Avoidance angular velocity | 0.45 rad/s |
+
+When an obstacle is detected, the robot can stop, turn toward the clearer direction and move forward to bypass it.
+
+During pre-docking, LiDAR measurements are also supplied to the navigation controller.
+
+### 5.5 Sensor Noise Characterisation
+
+Sensor measurements contain uncertainty caused by simulation noise, numerical errors and limitations of the sensing models.
+
+The EKF represents uncertainty using process noise covariance $Q$ and measurement noise covariance $R$.
+
+For camera pose measurements, the integrated script uses:
+
+$$
+R_{\text{camera}}=
+\begin{bmatrix}
+0.08^2 & 0 & 0\\
+0 & 0.08^2 & 0\\
+0 & 0 & (5\pi/180)^2
+\end{bmatrix}
+$$
+
+This corresponds to assumed standard deviations of:
+
+- X-position: 0.08 m.
+- Y-position: 0.08 m.
+- Heading: 5°.
+
+The camera correction uses a chi-square innovation gate with a threshold of 11.345, corresponding to a 99% confidence threshold for three measurement dimensions.
 
 ## 6. Estimation (Part C)
 
