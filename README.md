@@ -40,6 +40,39 @@ passive MuJoCo viewer and can be disabled with `--no-ghost`.
 
 ## 3. System architecture
 
+### Block diagram
+
+```
+                +---------------------------+
+                |     MuJoCo simulator      |
+                |  (TurtleBot3 Waffle Pi)   |
+                +---------------------------+
+                  |          |          |  ^
+                  v          v          v  |
+           +---------+ +---------+ +-------+  |
+           | Wheel   | | Camera  | | LiDAR |  |
+           | encoder | | (ArUco) | |       |  |
+           +---------+ +---------+ +-------+  |
+                |           |          |      |
+         predict|    correct|          |      |
+                v           v          |      |
+           +---------------------+     |      |
+           |   EKF (x, y, yaw)   |     |      |
+           +---------------------+     |      |
+                      |                |      |
+                      v                v      |
+           +------------------------------+   |
+           |      Mission state machine   |   |
+           | TagFollower / LQR / Visual   |   |
+           +------------------------------+   |
+                      |                       |
+                      v                       |
+           +------------------------------+   |
+           |  v, w  ->  wheel speeds      |---+
+           +------------------------------+
+```
+
+
 Constraint: the controller uses the estimated state only. Simulator ground truth is used for evaluation only.
 
 ## 4. Modelling (Part A)
