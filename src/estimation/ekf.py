@@ -54,9 +54,14 @@ class RobotEKF:
         """
         if model is not None:
             wheel_base = parameters_from_model(model).wheel_base
-        if wheel_base is None or wheel_base <= 0.0:
+        if wheel_base is None or not np.isfinite(wheel_base) or wheel_base <= 0.0:
             raise ValueError("wheel_base must be positive")
-        if wheel_noise_coeff < 0.0 or wheel_noise_floor_std <= 0.0:
+        if (
+            not np.isfinite(wheel_noise_coeff)
+            or wheel_noise_coeff < 0.0
+            or not np.isfinite(wheel_noise_floor_std)
+            or wheel_noise_floor_std <= 0.0
+        ):
             raise ValueError("wheel noise parameters must be positive")
 
         self.L = float(wheel_base)
@@ -162,7 +167,11 @@ class RobotEKF:
         # It is zero when both wheels move equally and small otherwise.
 
         if gyro_dyaw is not None:
-            if gyro_dyaw_var is None or not gyro_dyaw_var > 0.0:
+            if (
+                gyro_dyaw_var is None
+                or not np.isfinite(gyro_dyaw_var)
+                or gyro_dyaw_var <= 0.0
+            ):
                 raise ValueError("gyro_dyaw_var must be positive with gyro_dyaw")
             if not np.isfinite(gyro_dyaw):
                 raise ValueError("gyro_dyaw must be finite")
@@ -253,6 +262,10 @@ class RobotEKF:
             raise ValueError("measurement and covariance must be finite")
         if not np.allclose(covariance, covariance.T):
             raise ValueError("covariance must be symmetric")
+        if gate_chi2 is not None and (
+            not np.isfinite(gate_chi2) or gate_chi2 <= 0.0
+        ):
+            raise ValueError("gate_chi2 must be finite and positive")
 
         innovation = measurement - self.state
         innovation[2] = wrap_angle(float(innovation[2]))
