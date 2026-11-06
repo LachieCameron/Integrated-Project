@@ -12,7 +12,7 @@ project_root = Path(__file__).resolve().parents[1]
 if str(project_root) not in sys.path:
     sys.path.insert(0, str(project_root))
 
-from src.sensing.REDUN_camera_calibration import calibrate_from_images, save_calibration
+from src.sensing.camera_calibration import calibrate_from_images, save_calibration
 
 
 def main() -> None:
